@@ -21,8 +21,8 @@ type CityConfig = {
   zoom: number;
   tileBounds: [number, number, number, number];
   mapBounds: [number, number, number, number];
-  tilePath: "assets/tiles/ottawa/{z}/{x}/{y}.pbf",
-  catalogPath: "assets/roads/ottawa.json",
+  tilePath: string;
+  catalogPath: string;
   tagline: string;
   defaultTokens: string[];
 };
@@ -236,8 +236,8 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     zoom: 11.5,
     tileBounds: OTTAWA_TILE_BOUNDS,
     mapBounds: buildMapBounds(OTTAWA_TILE_BOUNDS),
-    tilePath: "tiles/ottawa/{z}/{x}/{y}.pbf",
-    catalogPath: "roads/ottawa.json",
+    tilePath: "assets/tiles/ottawa/{z}/{x}/{y}.pbf",
+    catalogPath: "assets/roads/ottawa.json",
     tagline: "Memorize high traffic roads in Canada's Capital.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.ottawa,
   },
@@ -247,8 +247,8 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     zoom: 11.5,
     tileBounds: MONTREAL_TILE_BOUNDS,
     mapBounds: buildMapBounds(MONTREAL_TILE_BOUNDS),
-    tilePath: "tiles/montreal/{z}/{x}/{y}.pbf",
-    catalogPath: "roads/montreal.json",
+    tilePath: "assets/tiles/montreal/{z}/{x}/{y}.pbf",
+    catalogPath: "assets/roads/montreal.json",
     tagline: "Memorize high traffic roads in Montreal.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.montreal,
   },
