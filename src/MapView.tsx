@@ -385,31 +385,7 @@ const ROAD_LABEL_TEXT_EXPRESSION: ExpressionSpecification = [
   ["get", "ref"],
   ""
 ];
-const buildRefLabelExpression = (
-  labels: Map<string, string>
-): ExpressionSpecification => {
-  if (!labels.size) {
-    return ["coalesce", ["get", "ref"], ""] as ExpressionSpecification;
-  }
-  const refValue: ExpressionSpecification = [
-    "concat",
-    ";",
-    ["downcase", ["coalesce", ["get", "ref"], ""]],
-    ";",
-  ];
-  const cases: Array<ExpressionSpecification | string> = [];
-  for (const [ref, label] of labels) {
-    cases.push(["in", `;${ref};`, refValue] as ExpressionSpecification, label);
-  }
-  return [
-    "case",
-    ...cases,
-    ["coalesce", ["get", "ref"], ""],
-  ] as ExpressionSpecification;
-};
-const MONTREAL_REF_LABEL_EXPRESSION = buildRefLabelExpression(
-  MONTREAL_REF_LABEL_OVERRIDES
-);
+
 const buildRoadLabelTextExpression = (
   city: CityKey
 ): ExpressionSpecification => {
