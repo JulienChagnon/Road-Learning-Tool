@@ -80,8 +80,8 @@ const POPULAR_ROADS_OTTAWA = [
   "Hazeldean Road", "Eagleson Road", "Katimavik Road", "Campeau Drive", "Kanata Avenue",
   "Robertson Road", "Moodie Drive", "Fallowfield Road", "Strandherd Drive", "Leitrim Road",
   "Tenth Line Road", "Trim Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
-  "Sussex Drive", "George Street", "York Street", "Clarence Street", "Murray Street",
-  "Dalhousie Street", "Cumberland Street", "Slater Street", "Albert Street",
+  "Sussex Drive", "George Street", "York Street", "Clarence Street",
+  "Dalhousie Street", "Slater Street", "Albert Street",
   "Metcalfe Street", "O'Connor Street", "Booth Street"
 ];
 
