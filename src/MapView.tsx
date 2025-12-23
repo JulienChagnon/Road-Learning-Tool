@@ -69,20 +69,20 @@ const ROAD_TILE_MAX_ZOOM = 14;
 
 // --- Popular Roads Data ---
 const POPULAR_ROADS_OTTAWA = [
-  "Carling Avenue", "Hunt Club Road", "West Hunt Club Road", "Somerset Street", "Somerset Street West", "Somerset", "Bank Street", "Rideau Street",
+  "Carling Avenue", "Hunt Club Road", "West Hunt Club Road", "Somerset Street West", "Bank Street", "Rideau Street",
   "Elgin Street", "Laurier Avenue", "Laurier Avenue West", "Wellington Street", "Bronson Avenue", "Baseline Road",
-  "Merivale Road", "Woodroffe Avenue", "Greenbank Road", "Clyde Avenue", "Fisher Avenue",
+  "Merivale Road", "Woodroffe Avenue", "Greenbank Road", "Fisher Avenue",
   "Riverside Drive", "St. Laurent Boulevard", "Montreal Road", "Innes Road", "Blair Road",
   "Vanier Parkway", "Prince of Wales Drive", "Heron Road", "Smyth Road", "Main Street",
-  "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Donald Street", "Scott Street",
+  "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street",
   "Richmond Road", "Island Park Drive", "Parkdale Avenue", "Terry Fox Drive", "March Road",
   "Kichi Zibi Mikan",
-  "Hazeldean Road", "Eagleson Road", "Katimavik Road", "Campeau Drive", "Kanata Avenue",
+  "Hazeldean Road", "Eagleson Road", "Campeau Drive", "Kanata Avenue",
   "Robertson Road", "Moodie Drive", "Fallowfield Road", "Strandherd Drive", "Leitrim Road",
   "Tenth Line Road", "Trim Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
   "Sussex Drive", "George Street", "York Street", "Clarence Street",
   "Dalhousie Street", "Slater Street", "Albert Street",
-  "Metcalfe Street", "O'Connor Street", "Booth Street"
+  "Metcalfe Street", "O'Connor Street", "Booth Street",
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -167,6 +167,19 @@ const ALL_POPULAR_ROADS = [
 const toDefaultToken = (value: string) => value.trim().toLowerCase();
 const POPULAR_ROAD_NAME_SET = new Set(
   ALL_POPULAR_ROADS.map((name) => toDefaultToken(name))
+);
+
+// Streets that are common downtown but often tagged as residential/unclassified in OSM.
+// These should NOT be restricted by MAJOR_HIGHWAY_FILTER.
+const RESIDENTIAL_DEFAULT_POPULAR_ROADS = [
+  "George Street",
+  "York Street",
+  "Clarence Street",
+  "St. Patrick Street",
+];
+
+const RESIDENTIAL_POPULAR_ROAD_NAME_SET = new Set(
+  RESIDENTIAL_DEFAULT_POPULAR_ROADS.map((name) => toDefaultToken(name))
 );
 const MONTREAL_REF_LABEL_OVERRIDES = new Map<string, string>(
   [
@@ -427,6 +440,22 @@ const MAJOR_HIGHWAY_FILTER: FilterSpecification = [
   ["get", "highway"],
   ["literal", MAJOR_HIGHWAY_TYPES],
 ];
+
+const RESIDENTIAL_HIGHWAY_TYPES = [
+  "residential",
+  "unclassified",
+  "living_street",
+  "road",
+  "service",
+  "pedestrian",
+];
+
+const RESIDENTIAL_HIGHWAY_FILTER: FilterSpecification = [
+  "in",
+  ["get", "highway"],
+  ["literal", RESIDENTIAL_HIGHWAY_TYPES],
+];
+
 const DIRECTIONAL_SUFFIX_PARTS = new Set([
   "n",
   "s",
@@ -582,16 +611,21 @@ const matchesRefTokenParts = (tokenParts: string[], refParts: string[]) => {
 };
 
 const splitNamesByPopularity = (names: string[]) => {
-  const popular: string[] = [];
+  const majorPopular: string[] = [];
+  const residentialPopular: string[] = [];
   const other: string[] = [];
+
   for (const name of names) {
-    if (POPULAR_ROAD_NAME_SET.has(name)) {
-      popular.push(name);
+    if (RESIDENTIAL_POPULAR_ROAD_NAME_SET.has(name)) {
+      residentialPopular.push(name);
+    } else if (POPULAR_ROAD_NAME_SET.has(name)) {
+      majorPopular.push(name);
     } else {
       other.push(name);
     }
   }
-  return { popular, other };
+
+  return { majorPopular, residentialPopular, other };
 };
 
 type PreferredPopularMatch = {
@@ -886,20 +920,39 @@ const buildRoadFilter = (
     return ["==", 1, 0];
   }
   if (!matchIndex) {
-    const strictNameTokens = roadTokens.filter((token) =>
-      POPULAR_ROAD_NAME_SET.has(token)
-    );
-    const looseTokens = roadTokens.filter(
-      (token) => !POPULAR_ROAD_NAME_SET.has(token)
-    );
-    const filters: FilterSpecification[] = [];
-    const strictNameFilter = buildStrictNameFilter(
-      strictNameTokens,
-      MAJOR_HIGHWAY_FILTER
-    );
-    if (strictNameFilter) {
-      filters.push(strictNameFilter);
-    }
+    const majorStrictNameTokens = roadTokens.filter(
+    (token) =>
+      POPULAR_ROAD_NAME_SET.has(token) &&
+      !RESIDENTIAL_POPULAR_ROAD_NAME_SET.has(token)
+  );
+
+  const residentialStrictNameTokens = roadTokens.filter((token) =>
+    RESIDENTIAL_POPULAR_ROAD_NAME_SET.has(token)
+  );
+
+  const looseTokens = roadTokens.filter(
+    (token) =>
+      !POPULAR_ROAD_NAME_SET.has(token) &&
+      !RESIDENTIAL_POPULAR_ROAD_NAME_SET.has(token)
+  );
+
+  const filters: FilterSpecification[] = [];
+
+  const majorStrictNameFilter = buildStrictNameFilter(
+    majorStrictNameTokens,
+    MAJOR_HIGHWAY_FILTER
+  );
+  if (majorStrictNameFilter) {
+    filters.push(majorStrictNameFilter);
+  }
+
+  const residentialStrictNameFilter = buildStrictNameFilter(
+    residentialStrictNameTokens,
+    RESIDENTIAL_HIGHWAY_FILTER
+  );
+  if (residentialStrictNameFilter) {
+    filters.push(residentialStrictNameFilter);
+  }
     if (looseTokens.length) {
       filters.push([
         "any",
@@ -926,28 +979,56 @@ const buildRoadFilter = (
   }
 
   const filters: FilterSpecification[] = [];
-  const { popular: popularStrictNames, other: otherStrictNames } =
-    splitNamesByPopularity(matchIndex.strictMatchedNames);
-  const { popular: popularMatchedNames, other: otherMatchedNames } =
-    splitNamesByPopularity(matchIndex.matchedNames);
-  const strictPopularFilter = buildStrictNameFilter(
-    popularStrictNames,
+  const {
+    majorPopular: majorPopularStrictNames,
+    residentialPopular: residentialPopularStrictNames,
+    other: otherStrictNames,
+  } = splitNamesByPopularity(matchIndex.strictMatchedNames);
+
+  const {
+    majorPopular: majorPopularMatchedNames,
+    residentialPopular: residentialPopularMatchedNames,
+    other: otherMatchedNames,
+  } = splitNamesByPopularity(matchIndex.matchedNames);
+
+  const strictMajorPopularFilter = buildStrictNameFilter(
+    majorPopularStrictNames,
     MAJOR_HIGHWAY_FILTER
   );
+
+  const strictResidentialPopularFilter = buildStrictNameFilter(
+    residentialPopularStrictNames,
+    RESIDENTIAL_HIGHWAY_FILTER
+  );
+
   const strictOtherFilter = buildStrictNameFilter(otherStrictNames);
-  if (strictPopularFilter) {
-    filters.push(strictPopularFilter);
+
+  if (strictMajorPopularFilter) {
+    filters.push(strictMajorPopularFilter);
+  }
+  if (strictResidentialPopularFilter) {
+    filters.push(strictResidentialPopularFilter);
   }
   if (strictOtherFilter) {
     filters.push(strictOtherFilter);
   }
-  if (popularMatchedNames.length) {
+
+  if (majorPopularMatchedNames.length) {
     filters.push([
       "all",
       MAJOR_HIGHWAY_FILTER,
-      ["in", ROAD_NAME_EXPRESSION, ["literal", popularMatchedNames]],
+      ["in", ROAD_NAME_EXPRESSION, ["literal", majorPopularMatchedNames]],
     ]);
   }
+
+  if (residentialPopularMatchedNames.length) {
+    filters.push([
+      "all",
+      RESIDENTIAL_HIGHWAY_FILTER,
+      ["in", ROAD_NAME_EXPRESSION, ["literal", residentialPopularMatchedNames]],
+    ]);
+  }
+
   if (otherMatchedNames.length) {
     filters.push([
       "in",
