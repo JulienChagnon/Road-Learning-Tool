@@ -21,8 +21,8 @@ type CityConfig = {
   zoom: number;
   tileBounds: [number, number, number, number];
   mapBounds: [number, number, number, number];
-  tilePath: string;
-  catalogPath: string;
+  tilePath: "assets/tiles/ottawa/{z}/{x}/{y}.pbf",
+  catalogPath: "assets/roads/ottawa.json",
   tagline: string;
   defaultTokens: string[];
 };
