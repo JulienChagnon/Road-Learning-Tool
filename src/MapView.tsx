@@ -258,12 +258,24 @@ const DEFAULT_ROAD_TOKENS = CITY_CONFIG[DEFAULT_CITY].defaultTokens;
 
 const getRoadTileUrl = (city: CityKey) => {
   const basePath = `${import.meta.env.BASE_URL}${CITY_CONFIG[city].tilePath}`;
-  return basePath;
+  if (import.meta.env.PROD) {
+    return basePath;
+  }
+  if (typeof window === "undefined") {
+    return basePath;
+  }
+  return `${window.location.origin}${basePath}`;
 };
 
 const getRoadCatalogUrl = (city: CityKey) => {
   const basePath = `${import.meta.env.BASE_URL}${CITY_CONFIG[city].catalogPath}`;
-  return basePath;
+  if (import.meta.env.PROD) {
+    return basePath;
+  }
+  if (typeof window === "undefined") {
+    return basePath;
+  }
+  return `${window.location.origin}${basePath}`;
 };
 
 // --- Color Helpers ---
