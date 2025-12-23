@@ -236,8 +236,8 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     zoom: 11.5,
     tileBounds: OTTAWA_TILE_BOUNDS,
     mapBounds: buildMapBounds(OTTAWA_TILE_BOUNDS),
-    tilePath: "../tiles/ottawa/{z}/{x}/{y}.pbf",
-    catalogPath: "../roads/ottawa.json",
+    tilePath: "tiles/ottawa/{z}/{x}/{y}.pbf",
+    catalogPath: "roads/ottawa.json",
     tagline: "Memorize high traffic roads in Canada's Capital.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.ottawa,
   },
@@ -247,8 +247,8 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     zoom: 11.5,
     tileBounds: MONTREAL_TILE_BOUNDS,
     mapBounds: buildMapBounds(MONTREAL_TILE_BOUNDS),
-    tilePath: "../tiles/montreal/{z}/{x}/{y}.pbf",
-    catalogPath: "../roads/montreal.json",
+    tilePath: "tiles/montreal/{z}/{x}/{y}.pbf",
+    catalogPath: "roads/montreal.json",
     tagline: "Memorize high traffic roads in Montreal.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.montreal,
   },
@@ -256,27 +256,19 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
 
 const DEFAULT_ROAD_TOKENS = CITY_CONFIG[DEFAULT_CITY].defaultTokens;
 
-const getRoadTileUrl = (city: CityKey) => {
-  const basePath = `${import.meta.env.BASE_URL}${CITY_CONFIG[city].tilePath}`;
-  if (import.meta.env.PROD) {
-    return basePath;
-  }
-  if (typeof window === "undefined") {
-    return basePath;
-  }
-  return `${window.location.origin}${basePath}`;
+const resolveStaticUrl = (path: string) => {
+  if (typeof window === "undefined") return path;
+
+  // BASE_URL is safe to feed into URL(); it won't contain {z}/{x}/{y}
+  const base = new URL(import.meta.env.BASE_URL, window.location.href);
+  const baseHref = base.href.endsWith("/") ? base.href : `${base.href}/`;
+
+  // IMPORTANT: string concat preserves {z}/{x}/{y} (URL() would encode braces)
+  return `${baseHref}${path.replace(/^\/+/, "")}`;
 };
 
-const getRoadCatalogUrl = (city: CityKey) => {
-  const basePath = `${import.meta.env.BASE_URL}${CITY_CONFIG[city].catalogPath}`;
-  if (import.meta.env.PROD) {
-    return basePath;
-  }
-  if (typeof window === "undefined") {
-    return basePath;
-  }
-  return `${window.location.origin}${basePath}`;
-};
+const getRoadTileUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].tilePath);
+const getRoadCatalogUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].catalogPath);
 
 // --- Color Helpers ---
 const stringToColor = (value: string) => {
