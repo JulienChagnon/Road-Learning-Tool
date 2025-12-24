@@ -11,7 +11,6 @@ import maplibregl, {
   type FilterSpecification,
   type MapGeoJSONFeature,
   type MapMouseEvent,
-  type StyleSpecification,
 } from "maplibre-gl";
 
 type CityKey = "ottawa" | "montreal";
@@ -30,30 +29,26 @@ type QuizResultState = "idle" | "correct" | "incorrect";
 
 const DEFAULT_CITY: CityKey = "ottawa";
 
-// Base Raster Style (Background texture)
-const BASE_RASTER_STYLE: StyleSpecification = {
+const BASE_RASTER_STYLE = {
   version: 8,
-  glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
   sources: {
-    carto: {
+    googleSat: {
       type: "raster",
       tiles: [
-        "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+        "https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
+        "https://mt1.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
+        "https://mt2.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
+        "https://mt3.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
       ],
       tileSize: 256,
-      attribution: "© CARTO",
+      attribution: "© Google",
     },
   },
   layers: [
     {
-      id: "background",
-      type: "background",
-      paint: { "background-color": "#ffffff" },
-    },
-    {
       id: "base",
       type: "raster",
-      source: "carto",
+      source: "googleSat",
       paint: { "raster-opacity": 1 },
     },
   ],
@@ -73,16 +68,17 @@ const POPULAR_ROADS_OTTAWA = [
   "Elgin Street", "Laurier Avenue", "Laurier Avenue West", "Wellington Street", "Bronson Avenue", "Baseline Road",
   "Merivale Road", "Woodroffe Avenue", "Greenbank Road", "Fisher Avenue",
   "Riverside Drive", "St. Laurent Boulevard", "Montreal Road", "Innes Road", "Blair Road",
-  "Vanier Parkway", "Prince of Wales Drive", "Heron Road", "Smyth Road", "Main Street",
+  "Vanier Parkway", "Prince of Wales Drive", "Heron Road", "Main Street",
   "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street",
   "Richmond Road", "Island Park Drive", "Parkdale Avenue", "Terry Fox Drive", "March Road",
   "Kichi Zibi Mikan",
   "Hazeldean Road", "Eagleson Road", "Campeau Drive", "Kanata Avenue",
   "Robertson Road", "Moodie Drive", "Fallowfield Road", "Strandherd Drive", "Leitrim Road",
-  "Tenth Line Road", "Trim Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
+  "Tenth Line Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
   "Sussex Drive", "George Street", "York Street", "Clarence Street",
   "Dalhousie Street", "Slater Street", "Albert Street",
   "Metcalfe Street", "O'Connor Street", "Booth Street",
+  "Wellington Street West"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -327,7 +323,7 @@ const getReadableTextColor = (value: string) => {
 };
 
 const DEFAULT_ROAD_COLOR = "#f28c5f";
-const QUIZ_BASE_ROAD_COLOR = "#3f464c";
+const QUIZ_BASE_ROAD_COLOR = "#ffffff66"; // ~40% opacity
 const DEFAULT_ROAD_TEXT_COLOR = getReadableTextColor(DEFAULT_ROAD_COLOR);
 
 // --- Expressions ---
@@ -348,6 +344,18 @@ const ROAD_ALT_NAME_EXPRESSION: ExpressionSpecification = [
   "downcase",
   ["coalesce", ["get", "name:en"], ["get", "name_en"], ""],
 ];
+const ROAD_NAME_EXPRESSIONS: ExpressionSpecification[] = [
+  ROAD_PRIMARY_NAME_EXPRESSION, // "name"
+  ROAD_ALT_NAME_EXPRESSION,     // "name:en" / "name_en"
+];
+
+const buildAnyNameInExpression = (names: string[]) =>
+  ([
+    "any",
+    ...ROAD_NAME_EXPRESSIONS.map(
+      (expr) => ["in", expr, ["literal", names]] as ExpressionSpecification
+    ),
+  ] as ExpressionSpecification);
 const ROAD_REF_EXPRESSION: ExpressionSpecification = [
   "downcase",
   ["coalesce", ["get", "ref"], ""],
@@ -686,12 +694,9 @@ const buildStrictNameFilter = (
   if (!names.length) return null;
   const strictFilter: FilterSpecification = [
     "any",
-    ["in", ROAD_PRIMARY_NAME_EXPRESSION, ["literal", names]],
-    [
-      "all",
-      ["==", ROAD_PRIMARY_NAME_EXPRESSION, ""],
-      ["in", ROAD_ALT_NAME_EXPRESSION, ["literal", names]],
-    ],
+    ...ROAD_NAME_EXPRESSIONS.map(
+      (expr) => ["in", expr, ["literal", names]] as FilterSpecification
+    ),
   ];
   if (!highwayFilter) return strictFilter;
   return ["all", highwayFilter, strictFilter] as FilterSpecification;
@@ -792,6 +797,18 @@ const buildRoadMatchIndex = (
   const aliasByToken = roadIndex.aliasByToken;
 
   for (const matcher of tokenMatchers) {
+    matchedNames.add(matcher.token);
+    if (!nameMatchesByToken.has(matcher.token)) {
+      nameMatchesByToken.set(matcher.token, new Set());
+    }
+    nameMatchesByToken.get(matcher.token)!.add(matcher.token);
+
+    matchedRefs.add(matcher.token);
+    if (!refMatchesByToken.has(matcher.token)) {
+      refMatchesByToken.set(matcher.token, new Set());
+    }
+    refMatchesByToken.get(matcher.token)!.add(matcher.token);
+
     const nameLabel = roadIndex.nameLabelByNormalized.get(matcher.token);
     const refLabel = roadIndex.refLabelByNormalized.get(matcher.token);
     const overrideLabel = labelOverrides?.get(matcher.token);
@@ -1017,7 +1034,7 @@ const buildRoadFilter = (
     filters.push([
       "all",
       MAJOR_HIGHWAY_FILTER,
-      ["in", ROAD_NAME_EXPRESSION, ["literal", majorPopularMatchedNames]],
+      buildAnyNameInExpression(majorPopularMatchedNames),
     ]);
   }
 
@@ -1025,16 +1042,14 @@ const buildRoadFilter = (
     filters.push([
       "all",
       RESIDENTIAL_HIGHWAY_FILTER,
-      ["in", ROAD_NAME_EXPRESSION, ["literal", residentialPopularMatchedNames]],
+      buildAnyNameInExpression(residentialPopularMatchedNames),
     ]);
   }
 
   if (otherMatchedNames.length) {
-    filters.push([
-      "in",
-      ROAD_NAME_EXPRESSION,
-      ["literal", otherMatchedNames],
-    ]);
+    filters.push(
+      buildAnyNameInExpression(otherMatchedNames) as unknown as FilterSpecification
+    );
   }
   if (matchIndex.matchedRefs.length) {
     filters.push([
@@ -1085,7 +1100,7 @@ const buildRoadColorExpression = (
     const pairs: Array<ExpressionSpecification | string> = [];
     if (nameMatches?.length) {
       pairs.push(
-        ["in", ROAD_NAME_EXPRESSION, ["literal", nameMatches]],
+        buildAnyNameInExpression(nameMatches),
         tokenColor
       );
     }
@@ -1190,7 +1205,7 @@ const buildRoadOpacityExpression = (
     const pairs: Array<ExpressionSpecification | number> = [];
     if (nameMatches?.length) {
       pairs.push(
-        ["in", ROAD_NAME_EXPRESSION, ["literal", nameMatches]],
+        buildAnyNameInExpression(nameMatches),
         1
       );
     }
@@ -1352,7 +1367,7 @@ const ensureRoadLayer = (
       paint: {
         "line-color": "#c1c7cbff",
         "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 12, 1.8, 15, 2.4],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.55, 10, 0.45, 15, 0.4],
+        "line-opacity": 0,
       },
     });
   }
@@ -1716,16 +1731,13 @@ export default function MapView() {
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
-    const { center, zoom, mapBounds } = CITY_CONFIG[DEFAULT_CITY];
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: BASE_RASTER_STYLE,
-      center,
-      zoom,
+      style: BASE_RASTER_STYLE as any,
+      center: CITY_CONFIG[DEFAULT_CITY].center,
+      zoom: CITY_CONFIG[DEFAULT_CITY].zoom,
+      maxBounds: CITY_CONFIG[DEFAULT_CITY].mapBounds,
       minZoom: ROAD_TILE_MIN_ZOOM,
-      maxBounds: mapBounds,
-      bearing: 0,
-      pitch: 0,
       attributionControl: false,
     });
 
