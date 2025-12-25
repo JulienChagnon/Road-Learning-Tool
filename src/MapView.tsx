@@ -315,16 +315,39 @@ const colorToRgb = (value: string) => {
   return null;
 };
 
-const getReadableTextColor = (value: string) => {
-  const rgb = colorToRgb(value);
-  if (!rgb) return "#111111";
-  const luminance = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
-  return luminance < 0.55 ? "#ffffff" : "#111111";
+
+
+// Build a contrasting text color from a (possibly dynamic) MapLibre color expression.
+// Uses relative luminance approximation on RGB components.
+const buildContrastingTextColorExpression = (
+  colorExpr: ExpressionSpecification | string,
+  threshold: number = 0.55
+): ExpressionSpecification => {
+  const rgba: ExpressionSpecification = ["to-rgba", ["to-color", colorExpr]];
+  const r: ExpressionSpecification = ["at", 0, rgba];
+  const g: ExpressionSpecification = ["at", 1, rgba];
+  const b: ExpressionSpecification = ["at", 2, rgba];
+
+  // luminance in [0,255]
+  const luminance: ExpressionSpecification = [
+    "+",
+    ["*", 0.2126, r],
+    ["*", 0.7152, g],
+    ["*", 0.0722, b],
+  ];
+
+  // If background is dark -> white text, else -> near-black text
+  return [
+    "case",
+    ["<", luminance, ["*", threshold, 255]],
+    "#ffffff",
+    "#111111",
+  ] as ExpressionSpecification;
 };
+
 
 const DEFAULT_ROAD_COLOR = "#f28c5f";
 const QUIZ_BASE_ROAD_COLOR = "#ffffff66"; // ~40% opacity
-const DEFAULT_ROAD_TEXT_COLOR = getReadableTextColor(DEFAULT_ROAD_COLOR);
 
 // --- Expressions ---
 const ROAD_NAME_GETTER: ExpressionSpecification = [
@@ -1117,63 +1140,6 @@ const buildRoadColorExpression = (
   return ["case", ...colorPairs, fallbackColor] as ExpressionSpecification;
 };
 
-const buildRoadTextColorExpression = (
-  roadTokens: string[],
-  matchIndex?: RoadMatchIndex | null
-): ExpressionSpecification | string => {
-  if (!roadTokens.length) return DEFAULT_ROAD_TEXT_COLOR;
-  if (!matchIndex) {
-    const textColorPairs = roadTokens.flatMap((token) => {
-      const tokenTextColor = getReadableTextColor(stringToColor(token));
-      return [
-        buildTokenMatchExpression(
-          token,
-          ROAD_NAME_EXPRESSION,
-          MIN_NAME_SUBSTRING_LENGTH
-        ),
-        tokenTextColor,
-        buildTokenMatchExpression(
-          token,
-          ROAD_REF_EXPRESSION,
-          MIN_REF_SUBSTRING_LENGTH
-        ),
-        tokenTextColor,
-      ];
-    });
-    return [
-      "case",
-      ...textColorPairs,
-      DEFAULT_ROAD_TEXT_COLOR,
-    ] as ExpressionSpecification;
-  }
-
-  const textColorPairs = roadTokens.flatMap((token) => {
-    const tokenTextColor = getReadableTextColor(stringToColor(token));
-    const nameMatches = matchIndex.nameMatchesByToken.get(token);
-    const refMatches = matchIndex.refMatchesByToken.get(token);
-    const pairs: Array<ExpressionSpecification | string> = [];
-    if (nameMatches?.length) {
-      pairs.push(
-        ["in", ROAD_NAME_EXPRESSION, ["literal", nameMatches]],
-        tokenTextColor
-      );
-    }
-    if (refMatches?.length) {
-      pairs.push(
-        ["in", ROAD_REF_EXPRESSION, ["literal", refMatches]],
-        tokenTextColor
-      );
-    }
-    return pairs;
-  });
-
-  if (!textColorPairs.length) return DEFAULT_ROAD_TEXT_COLOR;
-  return [
-    "case",
-    ...textColorPairs,
-    DEFAULT_ROAD_TEXT_COLOR,
-  ] as ExpressionSpecification;
-};
 
 const buildRoadOpacityExpression = (
   roadTokens: string[],
@@ -1747,12 +1713,13 @@ export default function MapView() {
 
     const handleLoad = () => {
       setMapLoaded(true);
+      const defaultLineColor = buildRoadColorExpression(DEFAULT_ROAD_TOKENS);
       ensureRoadLayer(
         map,
         DEFAULT_CITY,
         buildRoadFilter(DEFAULT_ROAD_TOKENS),
-        buildRoadColorExpression(DEFAULT_ROAD_TOKENS),
-        buildRoadTextColorExpression(DEFAULT_ROAD_TOKENS)
+        defaultLineColor,
+        buildContrastingTextColorExpression(defaultLineColor)
       );
       mapCityRef.current = DEFAULT_CITY;
     };
@@ -1774,12 +1741,13 @@ export default function MapView() {
     if (mapCityRef.current === city) return;
 
     const nextTokens = CITY_CONFIG[city].defaultTokens;
+    const nextLineColor = buildRoadColorExpression(nextTokens);
     resetRoadSource(
       map,
       city,
       buildRoadFilter(nextTokens),
-      buildRoadColorExpression(nextTokens),
-      buildRoadTextColorExpression(nextTokens)
+      nextLineColor,
+      buildContrastingTextColorExpression(nextLineColor)
     );
     mapCityRef.current = city;
   }, [city, mapLoaded]);
@@ -1809,20 +1777,12 @@ export default function MapView() {
     const labelFilter = isQuizActive
       ? buildRoadFilter(labelTokens, labelMatchIndex)
       : filter;
-    const textColor = isQuizActive
-      ? buildRoadTextColorExpression(labelTokens, labelMatchIndex)
-      : buildRoadTextColorExpression(activeRoadTokens, roadMatchIndex);
-    const labelOpacity = isQuizActive
+    const textColor = buildContrastingTextColorExpression(lineColor);
+const labelOpacity = isQuizActive
       ? buildRoadOpacityExpression(labelTokens, labelMatchIndex, 0)
       : 1;
-    const labelHaloColor = isQuizActive
-      ? buildRoadColorExpression(
-          quizFoundTokens,
-          quizFoundMatchIndex,
-          "rgba(0, 0, 0, 0)"
-        )
-      : lineColor;
-    const labelHaloWidth = isQuizActive
+    const labelHaloColor = lineColor;
+const labelHaloWidth = isQuizActive
       ? (["*", labelOpacity, 2] as ExpressionSpecification)
       : 2;
 
