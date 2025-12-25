@@ -78,7 +78,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Sussex Drive", "George Street", "York Street", "Clarence Street",
   "Dalhousie Street", "Slater Street", "Albert Street",
   "Metcalfe Street", "O'Connor Street", "Booth Street",
-  "Wellington Street West"
+  "Wellington Street West", "Maitland Avenue", "Gladstone Avenue"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -323,6 +323,15 @@ const buildContrastingTextColorExpression = (
 
 const DEFAULT_ROAD_COLOR = "#f28c5f";
 const QUIZ_BASE_ROAD_COLOR = "#ffffff85"; 
+
+const ROAD_COLOR_OVERRIDES: Record<string, string> = {
+  [toDefaultToken("Parkdale Avenue")]: "#2563eb",
+  [toDefaultToken("Bank Street")]: "#b5d2a6ff",
+  [toDefaultToken("Wellington Street")]: "#d23d3dff",
+  [toDefaultToken("West Hunt CLub Road")]: "#0095ffff",
+  [toDefaultToken("Hazeldean Road")]: "#a22c57ff",
+};
+
 
 // --- Expressions ---
 const ROAD_NAME_GETTER: ExpressionSpecification = [
@@ -1096,7 +1105,7 @@ const buildRoadColorExpression = (
   }
 
   const colorPairs = roadTokens.flatMap((token) => {
-    const tokenColor = stringToColor(token);
+    const tokenColor = ROAD_COLOR_OVERRIDES[token] ?? stringToColor(token);
     const nameMatches = matchIndex.nameMatchesByToken.get(token);
     const refMatches = matchIndex.refMatchesByToken.get(token);
     const pairs: Array<ExpressionSpecification | string> = [];
@@ -1862,14 +1871,17 @@ const labelHaloWidth = isQuizActive
     if (!map || !mapLoaded || !isQuizActive || !quizTargetToken) return;
 
     const tokenParts = getFoldedTokenParts(quizTargetToken);
-    const handleRoadClick = (
-      event: MapMouseEvent & {
-        features?: MapGeoJSONFeature[];
-      }
-    ) => {
-      const features =
-        event.features ??
-        map.queryRenderedFeatures(event.point, { layers: [ROAD_LAYER_ID] });
+    const handleRoadClick = (event: MapMouseEvent) => {
+      // Make quiz clicks a bit more forgiving by expanding the hit area around the cursor.
+      const QUIZ_HITBOX_PX = 10; // tweak: 8–14
+
+      const { x, y } = event.point;
+      const bbox: [[number, number], [number, number]] = [
+        [x - QUIZ_HITBOX_PX, y - QUIZ_HITBOX_PX],
+        [x + QUIZ_HITBOX_PX, y + QUIZ_HITBOX_PX],
+      ];
+
+      const features = map.queryRenderedFeatures(bbox, { layers: [ROAD_LAYER_ID] });
       if (!features.length) return;
       if (quizFoundTokensRef.current.includes(quizTargetToken)) return;
       if (quizAttemptedTokenRef.current === quizTargetToken) return;
@@ -1914,9 +1926,10 @@ const labelHaloWidth = isQuizActive
       );
     };
 
-    map.on("click", ROAD_LAYER_ID, handleRoadClick);
+    // Listen for any click on the map, then pick the closest rendered road within the hitbox.
+    map.on("click", handleRoadClick);
     return () => {
-      map.off("click", ROAD_LAYER_ID, handleRoadClick);
+      map.off("click", handleRoadClick);
     };
   }, [
     buildQuizQueue,
