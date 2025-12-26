@@ -67,11 +67,12 @@ const POPULAR_ROADS_OTTAWA = [
   "Carling Avenue", "Hunt Club Road", "West Hunt Club Road", "Somerset Street West", "Bank Street", "Rideau Street",
   "Elgin Street", "Laurier Avenue", "Laurier Avenue West", "Wellington Street", "Bronson Avenue", "Baseline Road",
   "Merivale Road", "Woodroffe Avenue", "Greenbank Road", "Fisher Avenue",
-  "Riverside Drive", "St. Laurent Boulevard", "Montreal Road", "Innes Road", "Blair Road",
-  "Vanier Parkway", "Prince of Wales Drive", "Heron Road", "Main Street",
+  "Riverside Drive", "St. Laurent Boulevard", "Montreal Road", "Innes Road", "Blair Road", "Prince of Wales Drive", "Heron Road", "Main Street",
   "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street",
   "Richmond Road", "Island Park Drive", "Parkdale Avenue", "Terry Fox Drive", "March Road",
   "Kichi Zibi Mikan",
+  "Alexandra Bridge", "Champlain Bridge", "Chaudière Bridge",
+  "Macdonald-Cartier Bridge", "Portage Bridge",
   "Hazeldean Road", "Eagleson Road", "Campeau Drive", "Kanata Avenue",
   "Robertson Road", "Moodie Drive", "Fallowfield Road", "Strandherd Drive", "Leitrim Road",
   "Tenth Line Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
@@ -192,6 +193,16 @@ const MONTREAL_REF_LABEL_OVERRIDES = new Map<string, string>(
     ["117", "Route du Nord (Route 117)"],
   ].map(([ref, label]) => [toDefaultToken(ref), label] as const)
 );
+const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
+  [
+    ["Pont Alexandra", "Alexandra Bridge"],
+    ["Pont Champlain Bridge", "Champlain Bridge"],
+    ["Pont Macdonald-Cartier Bridge", "Macdonald-Cartier Bridge"],
+    ["Pont du Portage", "Portage Bridge"],
+    ["Pont du Portage Bridge", "Portage Bridge"],
+    ["Pont de la Chaudière", "Chaudière Bridge"],
+  ].map(([name, label]) => [toDefaultToken(name), label] as const)
+);
 
 const buildDefaultRoadTokens = (names: string[], refs: string[]) => [
   ...names.map((name) => toDefaultToken(name)),
@@ -278,6 +289,16 @@ const resolveStaticUrl = (path: string) => {
 
 const getRoadTileUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].tilePath);
 const getRoadCatalogUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].catalogPath);
+const CITY_PATH_SEGMENTS: Record<CityKey, string> = {
+  ottawa: "",
+  montreal: "Montreal",
+};
+const getBasePathname = () => {
+  const base = new URL(import.meta.env.BASE_URL, window.location.href);
+  return base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+};
+const normalizePathname = (path: string) =>
+  path.endsWith("/") ? path : `${path}/`;
 
 // --- Color Helpers ---
 const stringToColor = (value: string) => {
@@ -323,6 +344,8 @@ const buildContrastingTextColorExpression = (
 
 const DEFAULT_ROAD_COLOR = "#f28c5f";
 const QUIZ_BASE_ROAD_COLOR = "#ffffff85"; 
+const QUIZ_CORRECT_ROAD_COLOR = "#4fb360ff";
+const QUIZ_INCORRECT_ROAD_COLOR = "#dd5656ff";
 
 const ROAD_COLOR_OVERRIDES: Record<string, string> = {
   [toDefaultToken("Parkdale Avenue")]: "#2563eb",
@@ -369,6 +392,9 @@ const ROAD_REF_EXPRESSION: ExpressionSpecification = [
 ];
 
 const MAIN_STREET_TOKEN = "main street";
+const BOOTH_STREET_TOKEN = toDefaultToken("Booth Street");
+const CHAUDIERE_BRIDGE_LABEL = "Chaudière Bridge";
+const RUE_CLARENCE_TOKEN = toDefaultToken("Rue Clarence");
 const MAIN_STREET_DOWNTOWN_BOUNDS: [number, number, number, number] = [
   -75.72,
   45.39,
@@ -392,6 +418,13 @@ const boundsToPolygon = (
 const MAIN_STREET_DOWNTOWN_POLYGON = boundsToPolygon(
   MAIN_STREET_DOWNTOWN_BOUNDS
 );
+const CHAUDIERE_BRIDGE_BOUNDS: [number, number, number, number] = [
+  -75.7202,
+  45.4199,
+  -75.7177,
+  45.4226,
+];
+const CHAUDIERE_BRIDGE_POLYGON = boundsToPolygon(CHAUDIERE_BRIDGE_BOUNDS);
 const MAIN_STREET_DOWNTOWN_FILTER: FilterSpecification = [
   "any",
   ["!=", ROAD_NAME_EXPRESSION, MAIN_STREET_TOKEN],
@@ -400,6 +433,18 @@ const MAIN_STREET_DOWNTOWN_FILTER: FilterSpecification = [
     ["==", ROAD_NAME_EXPRESSION, MAIN_STREET_TOKEN],
     ["within", MAIN_STREET_DOWNTOWN_POLYGON],
   ],
+];
+const CHAUDIERE_BRIDGE_OVERRIDE_MATCH: ExpressionSpecification = [
+  "all",
+  ["within", CHAUDIERE_BRIDGE_POLYGON],
+  ["==", ROAD_NAME_EXPRESSION, BOOTH_STREET_TOKEN],
+];
+const CHAUDIERE_BRIDGE_OVERRIDE_FILTER =
+  CHAUDIERE_BRIDGE_OVERRIDE_MATCH as FilterSpecification;
+const RUE_CLARENCE_EXCLUDE_FILTER: FilterSpecification = [
+  "all",
+  ["!=", ROAD_PRIMARY_NAME_EXPRESSION, RUE_CLARENCE_TOKEN],
+  ["!=", ROAD_ALT_NAME_EXPRESSION, RUE_CLARENCE_TOKEN],
 ];
 
 
@@ -412,13 +457,38 @@ const ROAD_LABEL_TEXT_EXPRESSION: ExpressionSpecification = [
   ["get", "ref"],
   ""
 ];
+const ROAD_LABEL_TEXT_EXPRESSION_EN_FIRST: ExpressionSpecification = [
+  "coalesce",
+  ["get", "name:en"],
+  ["get", "name_en"],
+  ["get", "name"],
+  ["get", "ref"],
+  ""
+];
 
-const buildRoadLabelTextExpression = (
-  city: CityKey
+const buildOttawaLabelTextExpression = (
+  useChaudiereOverride: boolean
 ): ExpressionSpecification => {
-  if (city !== "montreal") {
-    return ROAD_LABEL_TEXT_EXPRESSION;
+  let baseExpression: ExpressionSpecification = ROAD_LABEL_TEXT_EXPRESSION_EN_FIRST;
+  if (OTTAWA_NAME_LABEL_OVERRIDES.size) {
+    const cases: Array<ExpressionSpecification | string> = [];
+    for (const [name, label] of OTTAWA_NAME_LABEL_OVERRIDES) {
+      cases.push(["==", ROAD_NAME_EXPRESSION, name] as ExpressionSpecification, label);
+    }
+    baseExpression = ["case", ...cases, baseExpression] as ExpressionSpecification;
   }
+  if (!useChaudiereOverride) {
+    return baseExpression;
+  }
+  return [
+    "case",
+    CHAUDIERE_BRIDGE_OVERRIDE_MATCH,
+    CHAUDIERE_BRIDGE_LABEL,
+    baseExpression,
+  ] as ExpressionSpecification;
+};
+
+const buildMontrealLabelTextExpression = (): ExpressionSpecification => {
   if (!MONTREAL_REF_LABEL_OVERRIDES.size) {
     return ROAD_LABEL_TEXT_EXPRESSION;
   }
@@ -433,6 +503,21 @@ const buildRoadLabelTextExpression = (
     cases.push(["in", `;${ref};`, refValue] as ExpressionSpecification, label);
   }
   return ["case", ...cases, ROAD_LABEL_TEXT_EXPRESSION] as ExpressionSpecification;
+};
+
+const buildRoadLabelTextExpression = (
+  city: CityKey,
+  options?: { useChaudiereBridgeOverride?: boolean }
+): ExpressionSpecification => {
+  if (city === "ottawa") {
+    return buildOttawaLabelTextExpression(
+      options?.useChaudiereBridgeOverride ?? false
+    );
+  }
+  if (city === "montreal") {
+    return buildMontrealLabelTextExpression();
+  }
+  return ROAD_LABEL_TEXT_EXPRESSION;
 };
 
 const MIN_NAME_SUBSTRING_LENGTH = 3;
@@ -491,6 +576,15 @@ const DIRECTIONAL_SUFFIX_PARTS = new Set([
 const normalizeRoadToken = (value: string) => value.trim().toLowerCase();
 const foldRoadToken = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const foldTokenForMatch = (value: string) =>
+  foldRoadToken(value.trim().toLowerCase());
+const CHAUDIERE_BRIDGE_TOKEN_FOLDED = foldTokenForMatch(CHAUDIERE_BRIDGE_LABEL);
+const findTokenByFoldedMatch = (tokens: string[], foldedToken: string) =>
+  tokens.find((token) => foldTokenForMatch(token) === foldedToken);
+const findChaudiereBridgeToken = (tokens: string[]) =>
+  findTokenByFoldedMatch(tokens, CHAUDIERE_BRIDGE_TOKEN_FOLDED);
+const hasChaudiereBridgeToken = (tokens: string[]) =>
+  Boolean(findChaudiereBridgeToken(tokens));
 
 const getTokenParts = (token: string) => {
   const parts = token.split(TOKEN_PARTS_SPLIT_REGEX).filter(Boolean);
@@ -940,9 +1034,27 @@ const buildRoadMatchIndex = (
   };
 };
 
+const getRoadFilterOverrides = (city: CityKey, roadTokens: string[]) => {
+  if (city !== "ottawa") return [];
+  if (!hasChaudiereBridgeToken(roadTokens)) return [];
+  return [CHAUDIERE_BRIDGE_OVERRIDE_FILTER];
+};
+const getRoadGlobalFilters = (city: CityKey) => {
+  if (city === "ottawa") {
+    return [RUE_CLARENCE_EXCLUDE_FILTER];
+  }
+  return [];
+};
+const shouldUseChaudiereBridgeOverride = (
+  city: CityKey,
+  roadTokens: string[]
+) => city === "ottawa" && hasChaudiereBridgeToken(roadTokens);
+
 const buildRoadFilter = (
   roadTokens: string[],
-  matchIndex?: RoadMatchIndex | null
+  matchIndex?: RoadMatchIndex | null,
+  extraFilters: FilterSpecification[] = [],
+  globalFilters: FilterSpecification[] = []
 ): FilterSpecification => {
   if (!roadTokens.length) {
     return ["==", 1, 0];
@@ -998,10 +1110,14 @@ const buildRoadFilter = (
         ]),
       ]);
     }
+    if (extraFilters.length) {
+      filters.push(...extraFilters);
+    }
     if (!filters.length) return ["==", 1, 0];
     return [
       "all",
       MAIN_STREET_DOWNTOWN_FILTER,
+      ...globalFilters,
       ["any", ...filters],
     ] as FilterSpecification;
   }
@@ -1069,10 +1185,14 @@ const buildRoadFilter = (
       ["literal", matchIndex.matchedRefs],
     ]);
   }
+  if (extraFilters.length) {
+    filters.push(...extraFilters);
+  }
   if (!filters.length) return ["==", 1, 0];
   return [
     "all",
     MAIN_STREET_DOWNTOWN_FILTER,
+    ...globalFilters,
     ["any", ...filters],
   ] as FilterSpecification;
 };
@@ -1080,12 +1200,23 @@ const buildRoadFilter = (
 const buildRoadColorExpression = (
   roadTokens: string[],
   matchIndex?: RoadMatchIndex | null,
-  fallbackColor: string = DEFAULT_ROAD_COLOR
+  fallbackColor: string = DEFAULT_ROAD_COLOR,
+  colorOverrides?: Record<string, string>
 ): ExpressionSpecification | string => {
   if (!roadTokens.length) return fallbackColor;
+  const getTokenColor = (token: string) =>
+    colorOverrides?.[token] ?? ROAD_COLOR_OVERRIDES[token] ?? stringToColor(token);
+  const chaudiereToken = findChaudiereBridgeToken(roadTokens);
+  const overridePairs: Array<ExpressionSpecification | string> = [];
+  if (chaudiereToken) {
+    overridePairs.push(
+      CHAUDIERE_BRIDGE_OVERRIDE_MATCH,
+      getTokenColor(chaudiereToken)
+    );
+  }
   if (!matchIndex) {
     const colorPairs = roadTokens.flatMap((token) => {
-      const tokenColor = stringToColor(token);
+      const tokenColor = getTokenColor(token);
       return [
         buildTokenMatchExpression(
           token,
@@ -1101,11 +1232,16 @@ const buildRoadColorExpression = (
         tokenColor,
       ];
     });
-    return ["case", ...colorPairs, fallbackColor] as ExpressionSpecification;
+    return [
+      "case",
+      ...overridePairs,
+      ...colorPairs,
+      fallbackColor,
+    ] as ExpressionSpecification;
   }
 
   const colorPairs = roadTokens.flatMap((token) => {
-    const tokenColor = ROAD_COLOR_OVERRIDES[token] ?? stringToColor(token);
+    const tokenColor = getTokenColor(token);
     const nameMatches = matchIndex.nameMatchesByToken.get(token);
     const refMatches = matchIndex.refMatchesByToken.get(token);
     const pairs: Array<ExpressionSpecification | string> = [];
@@ -1124,8 +1260,13 @@ const buildRoadColorExpression = (
     return pairs;
   });
 
-  if (!colorPairs.length) return fallbackColor;
-  return ["case", ...colorPairs, fallbackColor] as ExpressionSpecification;
+  if (!colorPairs.length && !overridePairs.length) return fallbackColor;
+  return [
+    "case",
+    ...overridePairs,
+    ...colorPairs,
+    fallbackColor,
+  ] as ExpressionSpecification;
 };
 
 
@@ -1135,6 +1276,10 @@ const buildRoadOpacityExpression = (
   fallbackOpacity = 1
 ): ExpressionSpecification | number => {
   if (!roadTokens.length) return fallbackOpacity;
+  const overridePairs: Array<ExpressionSpecification | number> = [];
+  if (findChaudiereBridgeToken(roadTokens)) {
+    overridePairs.push(CHAUDIERE_BRIDGE_OVERRIDE_MATCH, 1);
+  }
   if (!matchIndex) {
     const opacityPairs = roadTokens.flatMap((token) => [
       buildTokenMatchExpression(
@@ -1150,7 +1295,12 @@ const buildRoadOpacityExpression = (
       ),
       1,
     ]);
-    return ["case", ...opacityPairs, fallbackOpacity] as ExpressionSpecification;
+    return [
+      "case",
+      ...overridePairs,
+      ...opacityPairs,
+      fallbackOpacity,
+    ] as ExpressionSpecification;
   }
 
   const opacityPairs = roadTokens.flatMap((token) => {
@@ -1172,8 +1322,13 @@ const buildRoadOpacityExpression = (
     return pairs;
   });
 
-  if (!opacityPairs.length) return fallbackOpacity;
-  return ["case", ...opacityPairs, fallbackOpacity] as ExpressionSpecification;
+  if (!opacityPairs.length && !overridePairs.length) return fallbackOpacity;
+  return [
+    "case",
+    ...overridePairs,
+    ...opacityPairs,
+    fallbackOpacity,
+  ] as ExpressionSpecification;
 };
 
 const shuffleTokens = (tokens: string[]) => {
@@ -1298,7 +1453,8 @@ const ensureRoadLayer = (
   city: CityKey,
   initialFilter: FilterSpecification,
   lineColorExpression: ExpressionSpecification | string,
-  textColorExpression: ExpressionSpecification | string
+  textColorExpression: ExpressionSpecification | string,
+  labelTextExpression: ExpressionSpecification | string
 ) => {
   if (!map.getSource(ROAD_SOURCE_ID)) {
     map.addSource(ROAD_SOURCE_ID, {
@@ -1353,7 +1509,7 @@ const ensureRoadLayer = (
       minzoom: ROAD_TILE_MIN_ZOOM,
       layout: {
         "symbol-placement": "line",
-        "text-field": buildRoadLabelTextExpression(city),
+        "text-field": labelTextExpression,
         "text-font": ["Noto Sans Regular", "Open Sans Regular"],
         
         "text-max-angle": 80, 
@@ -1400,7 +1556,8 @@ const resetRoadSource = (
   city: CityKey,
   initialFilter: FilterSpecification,
   lineColorExpression: ExpressionSpecification | string,
-  textColorExpression: ExpressionSpecification | string
+  textColorExpression: ExpressionSpecification | string,
+  labelTextExpression: ExpressionSpecification | string
 ) => {
   if (map.getLayer(ROAD_LABEL_LAYER_ID)) {
     map.removeLayer(ROAD_LABEL_LAYER_ID);
@@ -1419,7 +1576,8 @@ const resetRoadSource = (
     city,
     initialFilter,
     lineColorExpression,
-    textColorExpression
+    textColorExpression,
+    labelTextExpression
   );
 };
 
@@ -1441,6 +1599,8 @@ export default function MapView() {
   const [isQuizActive, setIsQuizActive] = useState(false);
   const [quizTargetToken, setQuizTargetToken] = useState<string | null>(null);
   const [quizFoundTokens, setQuizFoundTokens] = useState<string[]>([]);
+  const [quizCorrectTokens, setQuizCorrectTokens] = useState<string[]>([]);
+  const [quizIncorrectTokens, setQuizIncorrectTokens] = useState<string[]>([]);
   const [quizMessage, setQuizMessage] = useState<string | null>(null);
   const [quizQueue, setQuizQueue] = useState<string[]>([]);
   const [quizCorrectCount, setQuizCorrectCount] = useState(0);
@@ -1495,6 +1655,19 @@ export default function MapView() {
       quizTargetToken
     );
   }, [quizTargetToken, quizRoadMatchIndex, tokenLabelOverrides]);
+  const quizColorOverrides = useMemo(() => {
+    if (!quizCorrectTokens.length && !quizIncorrectTokens.length) {
+      return null;
+    }
+    const overrides: Record<string, string> = {};
+    quizCorrectTokens.forEach((token) => {
+      overrides[token] = QUIZ_CORRECT_ROAD_COLOR;
+    });
+    quizIncorrectTokens.forEach((token) => {
+      overrides[token] = QUIZ_INCORRECT_ROAD_COLOR;
+    });
+    return overrides;
+  }, [quizCorrectTokens, quizIncorrectTokens]);
   const listedRoads = useMemo<VisibleRoad[]>(() => {
     const tokenLabels = roadMatchIndex?.tokenLabels;
     return [...activeRoadTokens]
@@ -1514,6 +1687,19 @@ export default function MapView() {
   }, [activeRoadTokens, roadMatchIndex, tokenLabelOverrides]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const basePath = getBasePathname();
+    const segment = CITY_PATH_SEGMENTS[city];
+    const targetPath = segment ? `${basePath}${segment}` : basePath;
+    const url = new URL(window.location.href);
+    if (normalizePathname(url.pathname) === normalizePathname(targetPath)) {
+      return;
+    }
+    url.pathname = targetPath;
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [city]);
+
+  useEffect(() => {
     const nextTokens = CITY_CONFIG[city].defaultTokens;
     setActiveRoadTokens(nextTokens);
     setQuizRoadTokens(nextTokens);
@@ -1522,6 +1708,8 @@ export default function MapView() {
     setIsQuizActive(false);
     setQuizTargetToken(null);
     setQuizFoundTokens([]);
+    setQuizCorrectTokens([]);
+    setQuizIncorrectTokens([]);
     setQuizMessage(null);
     setQuizQueue([]);
     setQuizCorrectCount(0);
@@ -1621,6 +1809,8 @@ export default function MapView() {
       setIsQuizActive(false);
       setQuizTargetToken(null);
       setQuizFoundTokens([]);
+      setQuizCorrectTokens([]);
+      setQuizIncorrectTokens([]);
       setQuizMessage(null);
       setQuizQueue([]);
       setQuizCorrectCount(0);
@@ -1635,6 +1825,8 @@ export default function MapView() {
     setQuizRoadTokens(nextQuizTokens);
     setIsQuizActive(true);
     setQuizFoundTokens([]);
+    setQuizCorrectTokens([]);
+    setQuizIncorrectTokens([]);
     const nextQueue = buildQuizQueue([], nextQuizTokens);
     setQuizTargetToken(nextQueue[0] ?? null);
     setQuizQueue(nextQueue.slice(1));
@@ -1702,12 +1894,30 @@ export default function MapView() {
     const handleLoad = () => {
       setMapLoaded(true);
       const defaultLineColor = buildRoadColorExpression(DEFAULT_ROAD_TOKENS);
+      const defaultFilterOverrides = getRoadFilterOverrides(
+        DEFAULT_CITY,
+        DEFAULT_ROAD_TOKENS
+      );
+      const defaultGlobalFilters = getRoadGlobalFilters(DEFAULT_CITY);
+      const defaultFilter = buildRoadFilter(
+        DEFAULT_ROAD_TOKENS,
+        undefined,
+        defaultFilterOverrides,
+        defaultGlobalFilters
+      );
+      const defaultLabelText = buildRoadLabelTextExpression(DEFAULT_CITY, {
+        useChaudiereBridgeOverride: shouldUseChaudiereBridgeOverride(
+          DEFAULT_CITY,
+          DEFAULT_ROAD_TOKENS
+        ),
+      });
       ensureRoadLayer(
         map,
         DEFAULT_CITY,
-        buildRoadFilter(DEFAULT_ROAD_TOKENS),
+        defaultFilter,
         defaultLineColor,
-        buildContrastingTextColorExpression(defaultLineColor)
+        buildContrastingTextColorExpression(defaultLineColor),
+        defaultLabelText
       );
       mapCityRef.current = DEFAULT_CITY;
     };
@@ -1730,12 +1940,27 @@ export default function MapView() {
 
     const nextTokens = CITY_CONFIG[city].defaultTokens;
     const nextLineColor = buildRoadColorExpression(nextTokens);
+    const nextFilterOverrides = getRoadFilterOverrides(city, nextTokens);
+    const nextGlobalFilters = getRoadGlobalFilters(city);
+    const nextFilter = buildRoadFilter(
+      nextTokens,
+      undefined,
+      nextFilterOverrides,
+      nextGlobalFilters
+    );
+    const nextLabelText = buildRoadLabelTextExpression(city, {
+      useChaudiereBridgeOverride: shouldUseChaudiereBridgeOverride(
+        city,
+        nextTokens
+      ),
+    });
     resetRoadSource(
       map,
       city,
-      buildRoadFilter(nextTokens),
+      nextFilter,
       nextLineColor,
-      buildContrastingTextColorExpression(nextLineColor)
+      buildContrastingTextColorExpression(nextLineColor),
+      nextLabelText
     );
     mapCityRef.current = city;
   }, [city, mapLoaded]);
@@ -1754,25 +1979,46 @@ export default function MapView() {
     const labelTokens = isQuizActive ? quizFoundTokens : activeRoadTokens;
     const labelMatchIndex = isQuizActive ? quizFoundMatchIndex : roadMatchIndex;
 
-    const filter = buildRoadFilter(highlightTokens, highlightMatchIndex);
+    const filterOverrides = getRoadFilterOverrides(city, highlightTokens);
+    const globalFilters = getRoadGlobalFilters(city);
+    const filter = buildRoadFilter(
+      highlightTokens,
+      highlightMatchIndex,
+      filterOverrides,
+      globalFilters
+    );
     const lineColor = isQuizActive
       ? buildRoadColorExpression(
           quizFoundTokens,
           quizFoundMatchIndex,
-          QUIZ_BASE_ROAD_COLOR
+          QUIZ_BASE_ROAD_COLOR,
+          quizColorOverrides ?? undefined
         )
       : buildRoadColorExpression(activeRoadTokens, roadMatchIndex);
+    const labelFilterOverrides = getRoadFilterOverrides(city, labelTokens);
+    const labelGlobalFilters = getRoadGlobalFilters(city);
     const labelFilter = isQuizActive
-      ? buildRoadFilter(labelTokens, labelMatchIndex)
+      ? buildRoadFilter(
+          labelTokens,
+          labelMatchIndex,
+          labelFilterOverrides,
+          labelGlobalFilters
+        )
       : filter;
     const textColor = buildContrastingTextColorExpression(lineColor);
-const labelOpacity = isQuizActive
+    const labelOpacity = isQuizActive
       ? buildRoadOpacityExpression(labelTokens, labelMatchIndex, 0)
       : 1;
     const labelHaloColor = lineColor;
-const labelHaloWidth = isQuizActive
+    const labelHaloWidth = isQuizActive
       ? (["*", labelOpacity, 2] as ExpressionSpecification)
       : 2;
+    const labelTextExpression = buildRoadLabelTextExpression(city, {
+      useChaudiereBridgeOverride: shouldUseChaudiereBridgeOverride(
+        city,
+        labelTokens
+      ),
+    });
 
     if (map.getLayer(ROAD_LAYER_ID)) {
       map.setFilter(ROAD_LAYER_ID, filter);
@@ -1780,6 +2026,7 @@ const labelHaloWidth = isQuizActive
     }
     if (map.getLayer(ROAD_LABEL_LAYER_ID)) {
       map.setFilter(ROAD_LABEL_LAYER_ID, labelFilter);
+      map.setLayoutProperty(ROAD_LABEL_LAYER_ID, "text-field", labelTextExpression);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-color", textColor);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-halo-color", labelHaloColor);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-opacity", labelOpacity);
@@ -1787,10 +2034,12 @@ const labelHaloWidth = isQuizActive
     }
   }, [
     activeRoadTokens,
+    city,
     isQuizActive,
     mapLoaded,
     quizFoundMatchIndex,
     quizFoundTokens,
+    quizColorOverrides,
     quizRoadMatchIndex,
     quizRoadTokens,
     roadMatchIndex,
@@ -1897,6 +2146,17 @@ const labelHaloWidth = isQuizActive
       setQuizGuessCount((count) => count + 1);
       if (isMatch) {
         setQuizCorrectCount((count) => count + 1);
+        setQuizCorrectTokens((tokens) =>
+          tokens.includes(quizTargetToken)
+            ? tokens
+            : [...tokens, quizTargetToken]
+        );
+      } else {
+        setQuizIncorrectTokens((tokens) =>
+          tokens.includes(quizTargetToken)
+            ? tokens
+            : [...tokens, quizTargetToken]
+        );
       }
 
       const nextFound = [...quizFoundTokensRef.current, quizTargetToken];

@@ -11,5 +11,5 @@ Welcome to the Road Learning Tool! This application is designed to help users le
 - **Linting:** ESLint
 
 
-![alt text](/road-learning-tool/Media/Road_Learning_Tool.png)
+![alt text](./Media/Road_Learning_Tool.png)
 
