@@ -13,9 +13,10 @@ import maplibregl, {
   type MapMouseEvent,
 } from "maplibre-gl";
 
-type CityKey = "ottawa" | "montreal";
+type CityKey = "ottawa" | "montreal" | "kingston";
 type CityConfig = {
   label: string;
+  selectLabel?: string;
   center: [number, number];
   zoom: number;
   tileBounds: [number, number, number, number];
@@ -76,10 +77,12 @@ const POPULAR_ROADS_OTTAWA = [
   "Hazeldean Road", "Eagleson Road", "Campeau Drive", "Kanata Avenue",
   "Robertson Road", "Moodie Drive", "Fallowfield Road", "Strandherd Drive", "Leitrim Road",
   "Tenth Line Road", "Walkley Road", "Promenade Vanier Parkway", "Industrial Avenue", "Colonel By Drive",
-  "Sussex Drive", "George Street", "York Street", "Clarence Street",
+  "Queen Elizabeth Driveway", "Sussex Drive", "George Street", "York Street", "Clarence Street",
   "Dalhousie Street", "Slater Street", "Albert Street",
   "Metcalfe Street", "O'Connor Street", "Booth Street",
-  "Wellington Street West", "Maitland Avenue", "Gladstone Avenue"
+  "Wellington Street West", "Maitland Avenue", "Gladstone Avenue",
+  "Ogilvie Road", "St. Joseph Boulevard",
+  "Jeanne D'Arc Boulevard"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -135,6 +138,33 @@ const POPULAR_ROADS_MONTREAL = [
   "Boulevard Lapinière"
 ];
 
+const POPULAR_ROADS_KINGSTON = [
+  "Albert Street",
+  "Frontenac Street",
+  "Alfred Street",
+  "University Avenue",
+  "Aberdeen Street",
+  "Division Street",
+  "Princess Street",
+  "Johnson Street",
+  "Bagot Street",
+  "Barrie Street",
+  "Queen Street",
+  "King Street",
+  "Mack Street",
+  "Nelson Street",
+  "Earl Street",
+  "Union Street",
+  "Arch Street",
+  "Stuart Street",
+  "Brock Street",
+  "William Street",
+  "Collingwood Street",
+  "Victoria Street",
+  "Clergy Street",
+  "Bader Lane"
+];
+
 const POPULAR_ROAD_REFS_OTTAWA = ["417", "416", "174"];
 const POPULAR_ROAD_REFS_MONTREAL = ["Autoroute Bonaventure (A-10)",
   "Autoroute Chomedey (A-13)",
@@ -149,11 +179,13 @@ const POPULAR_ROAD_REFS_MONTREAL = ["Autoroute Bonaventure (A-10)",
 const POPULAR_ROADS_BY_CITY: Record<CityKey, string[]> = {
   ottawa: POPULAR_ROADS_OTTAWA,
   montreal: POPULAR_ROADS_MONTREAL,
+  kingston: POPULAR_ROADS_KINGSTON,
 };
 
 const POPULAR_ROAD_REFS_BY_CITY: Record<CityKey, string[]> = {
   ottawa: POPULAR_ROAD_REFS_OTTAWA,
   montreal: POPULAR_ROAD_REFS_MONTREAL,
+  kingston: [],
 };
 
 const ALL_POPULAR_ROADS = [
@@ -173,6 +205,7 @@ const RESIDENTIAL_DEFAULT_POPULAR_ROADS = [
   "York Street",
   "Clarence Street",
   "St. Patrick Street",
+  "Albert Street",
 ];
 
 const RESIDENTIAL_POPULAR_ROAD_NAME_SET = new Set(
@@ -203,6 +236,12 @@ const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
     ["Pont de la Chaudière", "Chaudière Bridge"],
   ].map(([name, label]) => [toDefaultToken(name), label] as const)
 );
+const KINGSTON_NAME_LABEL_OVERRIDES = new Map<string, string>(
+  [
+    ["King Street East", "King Street"],
+    ["King Street West", "King Street"],
+  ].map(([name, label]) => [toDefaultToken(name), label] as const)
+);
 
 const buildDefaultRoadTokens = (names: string[], refs: string[]) => [
   ...names.map((name) => toDefaultToken(name)),
@@ -218,6 +257,10 @@ const DEFAULT_ROAD_TOKENS_BY_CITY: Record<CityKey, string[]> = {
     POPULAR_ROADS_BY_CITY.montreal,
     POPULAR_ROAD_REFS_BY_CITY.montreal
   ),
+  kingston: buildDefaultRoadTokens(
+    POPULAR_ROADS_BY_CITY.kingston,
+    POPULAR_ROAD_REFS_BY_CITY.kingston
+  ),
 };
 
 const OTTAWA_TILE_BOUNDS: [number, number, number, number] = [
@@ -232,6 +275,13 @@ const MONTREAL_TILE_BOUNDS: [number, number, number, number] = [
   -73.353682,
   45.697687,
 ];
+const KINGSTON_TILE_BOUNDS: [number, number, number, number] = [
+  -76.544148,
+  44.195596,
+  -76.425662,
+  44.290928,
+];
+const KINGSTON_CENTER_OFFSET: [number, number] = [-0.009, -0.013];
 const buildMapBounds = (
   bounds: [number, number, number, number],
   padX = 0.8,
@@ -248,6 +298,7 @@ const buildBoundsCenter = (
   (bounds[0] + bounds[2]) / 2,
   (bounds[1] + bounds[3]) / 2,
 ];
+
 
 const CITY_CONFIG: Record<CityKey, CityConfig> = {
   ottawa: {
@@ -272,9 +323,22 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     tagline: "Memorize high traffic roads in Montreal.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.montreal,
   },
+  kingston: {
+    label: "Queen's University",
+    selectLabel: "Kingston (Queen's University)",
+    center: [
+      buildBoundsCenter(KINGSTON_TILE_BOUNDS)[0] + KINGSTON_CENTER_OFFSET[0],
+      buildBoundsCenter(KINGSTON_TILE_BOUNDS)[1] + KINGSTON_CENTER_OFFSET[1],
+    ],
+    zoom: 14,
+    tileBounds: KINGSTON_TILE_BOUNDS,
+    mapBounds: buildMapBounds(KINGSTON_TILE_BOUNDS),
+    tilePath: "assets/tiles/kingston/{z}/{x}/{y}.pbf",
+    catalogPath: "assets/roads/kingston.json",
+    tagline: "Memorize key streets around Queen's University.",
+    defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.kingston,
+  },
 };
-
-const DEFAULT_ROAD_TOKENS = CITY_CONFIG[DEFAULT_CITY].defaultTokens;
 
 const resolveStaticUrl = (path: string) => {
   if (typeof window === "undefined") return path;
@@ -289,9 +353,16 @@ const resolveStaticUrl = (path: string) => {
 
 const getRoadTileUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].tilePath);
 const getRoadCatalogUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].catalogPath);
+const QUIZ_PATH_SEGMENT = "quiz";
 const CITY_PATH_SEGMENTS: Record<CityKey, string> = {
-  ottawa: "",
-  montreal: "Montreal",
+  ottawa: "ottawa",
+  montreal: "montreal",
+  kingston: "kingston_queens_university",
+};
+const CITY_PATH_ALIASES: Record<CityKey, string[]> = {
+  ottawa: ["", "ottawa"],
+  montreal: ["montreal"],
+  kingston: ["kingston_queens_university", "kingston"],
 };
 const getBasePathname = () => {
   const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -299,6 +370,31 @@ const getBasePathname = () => {
 };
 const normalizePathname = (path: string) =>
   path.endsWith("/") ? path : `${path}/`;
+const getPathSegments = (pathname: string) => {
+  const basePath = normalizePathname(getBasePathname()).toLowerCase();
+  let normalized = normalizePathname(pathname).toLowerCase();
+  if (normalized.startsWith(basePath)) {
+    normalized = normalized.slice(basePath.length);
+  }
+  const trimmed = normalized.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmed ? trimmed.split("/") : [];
+};
+const getCityFromPathname = (pathname: string): CityKey => {
+  const segments = getPathSegments(pathname);
+  if (!segments.length) return DEFAULT_CITY;
+  if (segments[0] === QUIZ_PATH_SEGMENT) return DEFAULT_CITY;
+  for (const [city, aliases] of Object.entries(CITY_PATH_ALIASES)) {
+    if (aliases.includes(segments[0])) {
+      return city as CityKey;
+    }
+  }
+  return DEFAULT_CITY;
+};
+const getQuizFromPathname = (pathname: string) => {
+  const segments = getPathSegments(pathname);
+  if (!segments.length) return false;
+  return segments.includes(QUIZ_PATH_SEGMENT);
+};
 
 // --- Color Helpers ---
 const stringToColor = (value: string) => {
@@ -353,6 +449,13 @@ const ROAD_COLOR_OVERRIDES: Record<string, string> = {
   [toDefaultToken("Wellington Street")]: "#d23d3dff",
   [toDefaultToken("West Hunt CLub Road")]: "#0095ffff",
   [toDefaultToken("Hazeldean Road")]: "#a22c57ff",
+  [toDefaultToken("University Avenue")]: "#d66d94ff",
+  [toDefaultToken("Albert Street")]: "#bfa6ecff",
+  [toDefaultToken("Mack Street")]: "#5ad0b6ff",
+  [toDefaultToken("Union Street")]: "#ffa16fff",
+  [toDefaultToken("Queen Elizabeth Driveway")]: "#6d0978ff",
+  [toDefaultToken("Terry Fox Drive")]: "#eb5c5cff",
+  [toDefaultToken("Ogilvie Road")]: "#0a9396ff",
 };
 
 
@@ -540,21 +643,6 @@ const MAJOR_HIGHWAY_FILTER: FilterSpecification = [
   "in",
   ["get", "highway"],
   ["literal", MAJOR_HIGHWAY_TYPES],
-];
-
-const RESIDENTIAL_HIGHWAY_TYPES = [
-  "residential",
-  "unclassified",
-  "living_street",
-  "road",
-  "service",
-  "pedestrian",
-];
-
-const RESIDENTIAL_HIGHWAY_FILTER: FilterSpecification = [
-  "in",
-  ["get", "highway"],
-  ["literal", RESIDENTIAL_HIGHWAY_TYPES],
 ];
 
 const DIRECTIONAL_SUFFIX_PARTS = new Set([
@@ -1087,8 +1175,7 @@ const buildRoadFilter = (
   }
 
   const residentialStrictNameFilter = buildStrictNameFilter(
-    residentialStrictNameTokens,
-    RESIDENTIAL_HIGHWAY_FILTER
+    residentialStrictNameTokens
   );
   if (residentialStrictNameFilter) {
     filters.push(residentialStrictNameFilter);
@@ -1141,8 +1228,7 @@ const buildRoadFilter = (
   );
 
   const strictResidentialPopularFilter = buildStrictNameFilter(
-    residentialPopularStrictNames,
-    RESIDENTIAL_HIGHWAY_FILTER
+    residentialPopularStrictNames
   );
 
   const strictOtherFilter = buildStrictNameFilter(otherStrictNames);
@@ -1166,11 +1252,7 @@ const buildRoadFilter = (
   }
 
   if (residentialPopularMatchedNames.length) {
-    filters.push([
-      "all",
-      RESIDENTIAL_HIGHWAY_FILTER,
-      buildAnyNameInExpression(residentialPopularMatchedNames),
-    ]);
+    filters.push(buildAnyNameInExpression(residentialPopularMatchedNames));
   }
 
   if (otherMatchedNames.length) {
@@ -1582,21 +1664,30 @@ const resetRoadSource = (
 };
 
 export default function MapView() {
+  const initialCity =
+    typeof window === "undefined"
+      ? DEFAULT_CITY
+      : getCityFromPathname(window.location.pathname);
+  const initialTokens = CITY_CONFIG[initialCity].defaultTokens;
+  const initialIsQuizActive =
+    typeof window === "undefined"
+      ? false
+      : getQuizFromPathname(window.location.pathname);
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const mapCityRef = useRef<CityKey>(DEFAULT_CITY);
+  const mapCityRef = useRef<CityKey>(initialCity);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [activeRoadTokens, setActiveRoadTokens] = useState<string[]>(
-    DEFAULT_ROAD_TOKENS
+    initialTokens
   );
   const [quizRoadTokens, setQuizRoadTokens] = useState<string[]>(
-    DEFAULT_ROAD_TOKENS
+    initialTokens
   );
   const [roadCatalog, setRoadCatalog] = useState<RoadCatalog | null>(null);
   const [roadInput, setRoadInput] = useState("");
   const [isEditingRoads, setIsEditingRoads] = useState(false);
-  const [city, setCity] = useState<CityKey>(DEFAULT_CITY);
-  const [isQuizActive, setIsQuizActive] = useState(false);
+  const [city, setCity] = useState<CityKey>(initialCity);
+  const [isQuizActive, setIsQuizActive] = useState(initialIsQuizActive);
   const [quizTargetToken, setQuizTargetToken] = useState<string | null>(null);
   const [quizFoundTokens, setQuizFoundTokens] = useState<string[]>([]);
   const [quizCorrectTokens, setQuizCorrectTokens] = useState<string[]>([]);
@@ -1610,12 +1701,17 @@ export default function MapView() {
   const quizAttemptedTokenRef = useRef<string | null>(null);
   const quizFoundTokensRef = useRef<string[]>([]);
   const quizQueueRef = useRef<string[]>([]);
-  const quizRoadTokensRef = useRef<string[]>(DEFAULT_ROAD_TOKENS);
+  const quizRoadTokensRef = useRef<string[]>(initialTokens);
   const quizResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const isInitialLoadRef = useRef(true);
   const tokenLabelOverrides =
-    city === "montreal" ? MONTREAL_REF_LABEL_OVERRIDES : null;
+    city === "montreal"
+      ? MONTREAL_REF_LABEL_OVERRIDES
+      : city === "kingston"
+        ? KINGSTON_NAME_LABEL_OVERRIDES
+        : null;
 
   const roadIndex = useMemo(
     () => (roadCatalog ? buildRoadIndex(roadCatalog) : null),
@@ -1690,14 +1786,17 @@ export default function MapView() {
     if (typeof window === "undefined") return;
     const basePath = getBasePathname();
     const segment = CITY_PATH_SEGMENTS[city];
-    const targetPath = segment ? `${basePath}${segment}` : basePath;
+    const cityPath = `${basePath}${segment}`;
+    const targetPath = isQuizActive
+      ? `${normalizePathname(cityPath)}${QUIZ_PATH_SEGMENT}`
+      : cityPath;
     const url = new URL(window.location.href);
     if (normalizePathname(url.pathname) === normalizePathname(targetPath)) {
       return;
     }
     url.pathname = targetPath;
     window.history.replaceState(window.history.state, "", url.toString());
-  }, [city]);
+  }, [city, isQuizActive]);
 
   useEffect(() => {
     const nextTokens = CITY_CONFIG[city].defaultTokens;
@@ -1705,7 +1804,10 @@ export default function MapView() {
     setQuizRoadTokens(nextTokens);
     setRoadInput("");
     setIsEditingRoads(false);
-    setIsQuizActive(false);
+    const nextQuizActive = isInitialLoadRef.current
+      ? initialIsQuizActive
+      : false;
+    setIsQuizActive(nextQuizActive);
     setQuizTargetToken(null);
     setQuizFoundTokens([]);
     setQuizCorrectTokens([]);
@@ -1723,6 +1825,9 @@ export default function MapView() {
     if (quizResultTimeoutRef.current) {
       clearTimeout(quizResultTimeoutRef.current);
       quizResultTimeoutRef.current = null;
+    }
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
     }
   }, [city]);
 
@@ -1880,9 +1985,9 @@ export default function MapView() {
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: BASE_RASTER_STYLE as any,
-      center: CITY_CONFIG[DEFAULT_CITY].center,
-      zoom: CITY_CONFIG[DEFAULT_CITY].zoom,
-      maxBounds: CITY_CONFIG[DEFAULT_CITY].mapBounds,
+      center: CITY_CONFIG[initialCity].center,
+      zoom: CITY_CONFIG[initialCity].zoom,
+      maxBounds: CITY_CONFIG[initialCity].mapBounds,
       minZoom: ROAD_TILE_MIN_ZOOM,
       attributionControl: false,
     });
@@ -1893,33 +1998,33 @@ export default function MapView() {
 
     const handleLoad = () => {
       setMapLoaded(true);
-      const defaultLineColor = buildRoadColorExpression(DEFAULT_ROAD_TOKENS);
+      const defaultLineColor = buildRoadColorExpression(initialTokens);
       const defaultFilterOverrides = getRoadFilterOverrides(
-        DEFAULT_CITY,
-        DEFAULT_ROAD_TOKENS
+        initialCity,
+        initialTokens
       );
-      const defaultGlobalFilters = getRoadGlobalFilters(DEFAULT_CITY);
+      const defaultGlobalFilters = getRoadGlobalFilters(initialCity);
       const defaultFilter = buildRoadFilter(
-        DEFAULT_ROAD_TOKENS,
+        initialTokens,
         undefined,
         defaultFilterOverrides,
         defaultGlobalFilters
       );
-      const defaultLabelText = buildRoadLabelTextExpression(DEFAULT_CITY, {
+      const defaultLabelText = buildRoadLabelTextExpression(initialCity, {
         useChaudiereBridgeOverride: shouldUseChaudiereBridgeOverride(
-          DEFAULT_CITY,
-          DEFAULT_ROAD_TOKENS
+          initialCity,
+          initialTokens
         ),
       });
       ensureRoadLayer(
         map,
-        DEFAULT_CITY,
+        initialCity,
         defaultFilter,
         defaultLineColor,
         buildContrastingTextColorExpression(defaultLineColor),
         defaultLabelText
       );
-      mapCityRef.current = DEFAULT_CITY;
+      mapCityRef.current = initialCity;
     };
 
     map.on("load", handleLoad);
@@ -2289,7 +2394,7 @@ export default function MapView() {
                 >
                   {Object.entries(CITY_CONFIG).map(([key, config]) => (
                     <option key={key} value={key}>
-                      {config.label}
+                      {config.selectLabel ?? config.label}
                     </option>
                   ))}
                 </select>

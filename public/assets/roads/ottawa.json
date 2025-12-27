@@ -10151,5 +10151,15 @@
     "99",
     "NCC 10",
     "http://webcast.ottawa.ca/plan/All_Image%20Referencing_Site%20Plan%20Application_Image%20Reference_2020-04-10%20-%20Site%20Servicing%20and%20Storm%20Water%20Management%20Report%20-%20D07-12-20-0038.PDF"
+  ],
+  "aliases": [
+    {
+      "token": "Jeanne d'Arc Boulevard",
+      "label": "Jeanne d'Arc Boulevard",
+      "names": [
+        "Jeanne-d'Arc Boulevard North",
+        "Jeanne-d'Arc Boulevard South"
+      ]
+    }
   ]
 }
