@@ -82,7 +82,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Metcalfe Street", "O'Connor Street", "Booth Street",
   "Wellington Street West", "Maitland Avenue", "Gladstone Avenue",
   "Ogilvie Road", "St. Joseph Boulevard",
-  "Jeanne D'Arc Boulevard"
+  "Jeanne D'Arc Boulevard", "Aviation Parkway", "Sir-George-\u00c9tienne-Cartier Parkway"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -238,6 +238,7 @@ const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
 );
 const KINGSTON_NAME_LABEL_OVERRIDES = new Map<string, string>(
   [
+    ["King Street", "King Street"],
     ["King Street East", "King Street"],
     ["King Street West", "King Street"],
   ].map(([name, label]) => [toDefaultToken(name), label] as const)
@@ -358,12 +359,12 @@ const ROUTE_HASH_PREFIX = "#/";
 const CITY_PATH_SEGMENTS: Record<CityKey, string> = {
   ottawa: "ottawa",
   montreal: "montreal",
-  kingston: "kingston_queens_university",
+  kingston: "queens",
 };
 const CITY_PATH_ALIASES: Record<CityKey, string[]> = {
   ottawa: ["", "ottawa"],
   montreal: ["montreal"],
-  kingston: ["kingston_queens_university", "kingston"],
+  kingston: ["queens", "kingston_queens_university", "kingston"],
 };
 const getBasePathname = () => {
   const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -470,6 +471,8 @@ const ROAD_COLOR_OVERRIDES: Record<string, string> = {
   [toDefaultToken("Queen Elizabeth Driveway")]: "#6d0978ff",
   [toDefaultToken("Terry Fox Drive")]: "#eb5c5cff",
   [toDefaultToken("Ogilvie Road")]: "#0a9396ff",
+  [toDefaultToken("174")]: "#eae685ff",
+  [toDefaultToken("St. Laurent Boulevard")]: "#f78dbbff"
 };
 
 
@@ -1811,15 +1814,20 @@ export default function MapView() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const basePath = getBasePathname();
     const segment = CITY_PATH_SEGMENTS[city];
     const targetPath = `/${[segment, isQuizActive ? QUIZ_PATH_SEGMENT : ""]
       .filter(Boolean)
       .join("/")}`;
     const currentPath = getRoutePathname();
     const url = new URL(window.location.href);
-    if (normalizePathname(currentPath) === normalizePathname(targetPath)) {
+    if (
+      normalizePathname(currentPath) === normalizePathname(targetPath) &&
+      url.pathname === basePath
+    ) {
       return;
     }
+    url.pathname = basePath;
     url.hash = `${ROUTE_HASH_PREFIX}${targetPath.replace(/^\/+/, "")}`;
     window.history.replaceState(window.history.state, "", url.toString());
   }, [city, isQuizActive]);
