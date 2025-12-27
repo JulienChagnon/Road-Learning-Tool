@@ -354,6 +354,7 @@ const resolveStaticUrl = (path: string) => {
 const getRoadTileUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].tilePath);
 const getRoadCatalogUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].catalogPath);
 const QUIZ_PATH_SEGMENT = "quiz";
+const ROUTE_HASH_PREFIX = "#/";
 const CITY_PATH_SEGMENTS: Record<CityKey, string> = {
   ottawa: "ottawa",
   montreal: "montreal",
@@ -367,6 +368,19 @@ const CITY_PATH_ALIASES: Record<CityKey, string[]> = {
 const getBasePathname = () => {
   const base = new URL(import.meta.env.BASE_URL, window.location.href);
   return base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+};
+const getRoutePathname = () => {
+  if (typeof window === "undefined") return "/";
+  const hash = window.location.hash;
+  if (hash.startsWith(ROUTE_HASH_PREFIX)) {
+    const path = hash.slice(ROUTE_HASH_PREFIX.length);
+    return `/${path.replace(/^\/+/, "")}`;
+  }
+  if (hash.startsWith("#")) {
+    const path = hash.slice(1);
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+  return window.location.pathname;
 };
 const normalizePathname = (path: string) =>
   path.endsWith("/") ? path : `${path}/`;
@@ -757,6 +771,15 @@ type RoadMatchIndex = {
   tokenLabels: Map<string, string>;
 };
 
+type TokenMatch = {
+  matchedNames: Set<string>;
+  strictMatchedNames: Set<string>;
+  matchedRefs: Set<string>;
+  nameMatches: Set<string>;
+  refMatches: Set<string>;
+  tokenLabel: string | null;
+};
+
 const getNameParts = (value: string) => getFoldedTokenParts(value);
 
 const wordMatchesTokenPart = (tokenPart: string, namePart: string) => {
@@ -970,133 +993,136 @@ const buildRoadIndex = (catalog: RoadCatalog): RoadIndex => {
   };
 };
 
-const buildRoadMatchIndex = (
-  roadIndex: RoadIndex,
-  roadTokens: string[],
-  labelOverrides?: Map<string, string> | null
-): RoadMatchIndex => {
-  const tokenMatchers = roadTokens.map((token) => ({
-    token,
-    parts: getFoldedTokenParts(token),
-  }));
-  const matchedNames = new Set<string>();
-  const matchedRefs = new Set<string>();
+const tokenMatchCache = new WeakMap<RoadIndex, Map<string, TokenMatch>>();
+
+const getTokenMatch = (roadIndex: RoadIndex, token: string): TokenMatch => {
+  let cache = tokenMatchCache.get(roadIndex);
+  if (!cache) {
+    cache = new Map();
+    tokenMatchCache.set(roadIndex, cache);
+  }
+
+  const cached = cache.get(token);
+  if (cached) return cached;
+
+  const tokenParts = getFoldedTokenParts(token);
+  const matchedNames = new Set<string>([token]);
   const strictMatchedNames = new Set<string>();
-  const nameMatchesByToken = new Map<string, Set<string>>();
-  const refMatchesByToken = new Map<string, Set<string>>();
-  const tokenLabels = new Map<string, string>();
-  const exactTokens = new Set<string>();
-  const preferredPopularMatches = new Map<string, string>();
-  const aliasByToken = roadIndex.aliasByToken;
+  const matchedRefs = new Set<string>([token]);
+  const nameMatches = new Set<string>([token]);
+  const refMatches = new Set<string>([token]);
 
-  for (const matcher of tokenMatchers) {
-    matchedNames.add(matcher.token);
-    if (!nameMatchesByToken.has(matcher.token)) {
-      nameMatchesByToken.set(matcher.token, new Set());
-    }
-    nameMatchesByToken.get(matcher.token)!.add(matcher.token);
+  const alias = roadIndex.aliasByToken.get(token);
+  const nameLabel = roadIndex.nameLabelByNormalized.get(token);
+  const refLabel = roadIndex.refLabelByNormalized.get(token);
+  let tokenLabel: string | null = null;
+  let hasExactLabel = false;
 
-    matchedRefs.add(matcher.token);
-    if (!refMatchesByToken.has(matcher.token)) {
-      refMatchesByToken.set(matcher.token, new Set());
-    }
-    refMatchesByToken.get(matcher.token)!.add(matcher.token);
+  if (alias?.label) {
+    tokenLabel = alias.label;
+    hasExactLabel = true;
+  } else if (nameLabel) {
+    tokenLabel = nameLabel;
+    hasExactLabel = true;
+  } else if (refLabel) {
+    tokenLabel = refLabel;
+    hasExactLabel = true;
+  }
 
-    const nameLabel = roadIndex.nameLabelByNormalized.get(matcher.token);
-    const refLabel = roadIndex.refLabelByNormalized.get(matcher.token);
-    const overrideLabel = labelOverrides?.get(matcher.token);
-    const alias = aliasByToken.get(matcher.token);
-    if (overrideLabel) {
-      tokenLabels.set(matcher.token, overrideLabel);
-      exactTokens.add(matcher.token);
-    } else if (alias?.label) {
-      tokenLabels.set(matcher.token, alias.label);
-      exactTokens.add(matcher.token);
-    } else if (nameLabel) {
-      tokenLabels.set(matcher.token, nameLabel);
-      exactTokens.add(matcher.token);
-    } else if (refLabel) {
-      tokenLabels.set(matcher.token, refLabel);
-      exactTokens.add(matcher.token);
-    }
-
-    if (POPULAR_ROAD_NAME_SET.has(matcher.token)) {
-      const preferred =
-        nameLabel
-          ? { normalized: matcher.token, label: nameLabel }
-          : selectPreferredPopularMatch(matcher.token, matcher.parts, roadIndex);
-      if (preferred) {
-        preferredPopularMatches.set(matcher.token, preferred.normalized);
-        tokenLabels.set(matcher.token, preferred.label);
-        exactTokens.add(matcher.token);
-      }
+  let preferredMatch: PreferredPopularMatch | null = null;
+  if (POPULAR_ROAD_NAME_SET.has(token)) {
+    preferredMatch = nameLabel
+      ? { normalized: token, label: nameLabel }
+      : selectPreferredPopularMatch(token, tokenParts, roadIndex);
+    if (preferredMatch) {
+      strictMatchedNames.add(preferredMatch.normalized);
+      nameMatches.add(preferredMatch.normalized);
+      tokenLabel = preferredMatch.label;
+      hasExactLabel = true;
     }
   }
 
-  for (const entry of roadIndex.nameEntries) {
-    for (const matcher of tokenMatchers) {
-      const preferredMatch = preferredPopularMatches.get(matcher.token);
-      if (preferredMatch) {
-        if (entry.normalized !== preferredMatch) continue;
-        strictMatchedNames.add(entry.normalized);
-      } else {
-        if (!matchesNameTokenParts(matcher.parts, entry.parts)) {
-          continue;
-        }
-        matchedNames.add(entry.normalized);
-      }
-      if (!nameMatchesByToken.has(matcher.token)) {
-        nameMatchesByToken.set(matcher.token, new Set());
-      }
-      nameMatchesByToken.get(matcher.token)!.add(entry.normalized);
-      if (!exactTokens.has(matcher.token)) {
-        const currentLabel = tokenLabels.get(matcher.token);
-        if (!currentLabel || entry.label.length < currentLabel.length) {
-          tokenLabels.set(matcher.token, entry.label);
+  if (!preferredMatch) {
+    for (const entry of roadIndex.nameEntries) {
+      if (!matchesNameTokenParts(tokenParts, entry.parts)) continue;
+      matchedNames.add(entry.normalized);
+      nameMatches.add(entry.normalized);
+      if (!hasExactLabel) {
+        if (!tokenLabel || entry.label.length < tokenLabel.length) {
+          tokenLabel = entry.label;
         }
       }
     }
   }
 
   for (const entry of roadIndex.refEntries) {
-    for (const matcher of tokenMatchers) {
-      if (!matchesRefTokenParts(matcher.parts, entry.parts)) {
-        continue;
-      }
-      matchedRefs.add(entry.normalized);
-      if (!refMatchesByToken.has(matcher.token)) {
-        refMatchesByToken.set(matcher.token, new Set());
-      }
-      refMatchesByToken.get(matcher.token)!.add(entry.normalized);
-      if (!exactTokens.has(matcher.token)) {
-        const currentLabel = tokenLabels.get(matcher.token);
-        if (!currentLabel || entry.label.length < currentLabel.length) {
-          tokenLabels.set(matcher.token, entry.label);
-        }
+    if (!matchesRefTokenParts(tokenParts, entry.parts)) continue;
+    matchedRefs.add(entry.normalized);
+    refMatches.add(entry.normalized);
+    if (!hasExactLabel) {
+      if (!tokenLabel || entry.label.length < tokenLabel.length) {
+        tokenLabel = entry.label;
       }
     }
   }
 
-  for (const matcher of tokenMatchers) {
-    const alias = aliasByToken.get(matcher.token);
-    if (!alias) continue;
-    if (alias.names.length) {
-      for (const name of alias.names) {
-        matchedNames.add(name);
-        if (!nameMatchesByToken.has(matcher.token)) {
-          nameMatchesByToken.set(matcher.token, new Set());
-        }
-        nameMatchesByToken.get(matcher.token)!.add(name);
-      }
+  if (alias?.names.length) {
+    for (const name of alias.names) {
+      matchedNames.add(name);
+      nameMatches.add(name);
     }
-    if (alias.refs.length) {
-      for (const ref of alias.refs) {
-        matchedRefs.add(ref);
-        if (!refMatchesByToken.has(matcher.token)) {
-          refMatchesByToken.set(matcher.token, new Set());
-        }
-        refMatchesByToken.get(matcher.token)!.add(ref);
-      }
+  }
+
+  if (alias?.refs.length) {
+    for (const ref of alias.refs) {
+      matchedRefs.add(ref);
+      refMatches.add(ref);
+    }
+  }
+
+  const result: TokenMatch = {
+    matchedNames,
+    strictMatchedNames,
+    matchedRefs,
+    nameMatches,
+    refMatches,
+    tokenLabel,
+  };
+
+  cache.set(token, result);
+  return result;
+};
+
+const buildRoadMatchIndex = (
+  roadIndex: RoadIndex,
+  roadTokens: string[],
+  labelOverrides?: Map<string, string> | null
+): RoadMatchIndex => {
+  const matchedNames = new Set<string>();
+  const matchedRefs = new Set<string>();
+  const strictMatchedNames = new Set<string>();
+  const nameMatchesByToken = new Map<string, Set<string>>();
+  const refMatchesByToken = new Map<string, Set<string>>();
+  const tokenLabels = new Map<string, string>();
+  for (const token of roadTokens) {
+    const tokenMatch = getTokenMatch(roadIndex, token);
+    for (const name of tokenMatch.matchedNames) {
+      matchedNames.add(name);
+    }
+    for (const name of tokenMatch.strictMatchedNames) {
+      strictMatchedNames.add(name);
+    }
+    for (const ref of tokenMatch.matchedRefs) {
+      matchedRefs.add(ref);
+    }
+    nameMatchesByToken.set(token, new Set(tokenMatch.nameMatches));
+    refMatchesByToken.set(token, new Set(tokenMatch.refMatches));
+
+    const overrideLabel = labelOverrides?.get(token);
+    if (overrideLabel) {
+      tokenLabels.set(token, overrideLabel);
+    } else if (tokenMatch.tokenLabel) {
+      tokenLabels.set(token, tokenMatch.tokenLabel);
     }
   }
 
@@ -1667,12 +1693,12 @@ export default function MapView() {
   const initialCity =
     typeof window === "undefined"
       ? DEFAULT_CITY
-      : getCityFromPathname(window.location.pathname);
+      : getCityFromPathname(getRoutePathname());
   const initialTokens = CITY_CONFIG[initialCity].defaultTokens;
   const initialIsQuizActive =
     typeof window === "undefined"
       ? false
-      : getQuizFromPathname(window.location.pathname);
+      : getQuizFromPathname(getRoutePathname());
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapCityRef = useRef<CityKey>(initialCity);
@@ -1706,6 +1732,7 @@ export default function MapView() {
     null
   );
   const isInitialLoadRef = useRef(true);
+  const hasInitializedQuizRef = useRef(false);
   const tokenLabelOverrides =
     city === "montreal"
       ? MONTREAL_REF_LABEL_OVERRIDES
@@ -1784,17 +1811,16 @@ export default function MapView() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const basePath = getBasePathname();
     const segment = CITY_PATH_SEGMENTS[city];
-    const cityPath = `${basePath}${segment}`;
-    const targetPath = isQuizActive
-      ? `${normalizePathname(cityPath)}${QUIZ_PATH_SEGMENT}`
-      : cityPath;
+    const targetPath = `/${[segment, isQuizActive ? QUIZ_PATH_SEGMENT : ""]
+      .filter(Boolean)
+      .join("/")}`;
+    const currentPath = getRoutePathname();
     const url = new URL(window.location.href);
-    if (normalizePathname(url.pathname) === normalizePathname(targetPath)) {
+    if (normalizePathname(currentPath) === normalizePathname(targetPath)) {
       return;
     }
-    url.pathname = targetPath;
+    url.hash = `${ROUTE_HASH_PREFIX}${targetPath.replace(/^\/+/, "")}`;
     window.history.replaceState(window.history.state, "", url.toString());
   }, [city, isQuizActive]);
 
@@ -1828,6 +1854,9 @@ export default function MapView() {
     }
     if (isInitialLoadRef.current) {
       isInitialLoadRef.current = false;
+    }
+    if (!nextQuizActive) {
+      hasInitializedQuizRef.current = false;
     }
   }, [city]);
 
@@ -1907,24 +1936,26 @@ export default function MapView() {
     );
   }, [clearQuizResultTimeout, quizCorrectCount, quizGuessCount, quizTargetToken]);
 
-  const handleQuizToggle = useCallback(() => {
+  const stopQuiz = useCallback(() => {
     clearQuizResultTimeout();
     setQuizResultState("idle");
-    if (isQuizActive) {
-      setIsQuizActive(false);
-      setQuizTargetToken(null);
-      setQuizFoundTokens([]);
-      setQuizCorrectTokens([]);
-      setQuizIncorrectTokens([]);
-      setQuizMessage(null);
-      setQuizQueue([]);
-      setQuizCorrectCount(0);
-      setQuizGuessCount(0);
-      quizFoundTokensRef.current = [];
-      quizQueueRef.current = [];
-      return;
-    }
+    setIsQuizActive(false);
+    setQuizTargetToken(null);
+    setQuizFoundTokens([]);
+    setQuizCorrectTokens([]);
+    setQuizIncorrectTokens([]);
+    setQuizMessage(null);
+    setQuizQueue([]);
+    setQuizCorrectCount(0);
+    setQuizGuessCount(0);
+    quizFoundTokensRef.current = [];
+    quizQueueRef.current = [];
+    hasInitializedQuizRef.current = false;
+  }, [clearQuizResultTimeout]);
 
+  const startQuiz = useCallback(() => {
+    clearQuizResultTimeout();
+    setQuizResultState("idle");
     const nextQuizTokens = [...activeRoadTokens];
     quizRoadTokensRef.current = nextQuizTokens;
     setQuizRoadTokens(nextQuizTokens);
@@ -1946,13 +1977,21 @@ export default function MapView() {
     );
     setQuizCorrectCount(0);
     setQuizGuessCount(0);
+    hasInitializedQuizRef.current = true;
   }, [
     activeRoadTokens,
     buildQuizQueue,
     clearQuizResultTimeout,
-    isQuizActive,
     mapLoaded,
   ]);
+
+  const handleQuizToggle = useCallback(() => {
+    if (isQuizActive) {
+      stopQuiz();
+      return;
+    }
+    startQuiz();
+  }, [isQuizActive, startQuiz, stopQuiz]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2187,6 +2226,11 @@ export default function MapView() {
   useEffect(() => {
     refreshQuizTarget();
   }, [refreshQuizTarget]);
+
+  useEffect(() => {
+    if (!isQuizActive || hasInitializedQuizRef.current) return;
+    startQuiz();
+  }, [isQuizActive, startQuiz]);
 
   useEffect(() => {
     quizRoadTokensRef.current = quizRoadTokens;
