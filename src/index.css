@@ -14,6 +14,13 @@
   --muted: #a5b5ba;
   --accent: #f0b760;
   --accent-strong: #4cc6b8;
+  --app-height: 100vh;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
 }
 
 *,

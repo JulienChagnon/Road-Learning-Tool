@@ -8,16 +8,16 @@ INPUT_PATH="${1:-$ROOT_DIR/$DEFAULT_INPUT}"
 CITY="${2:-ottawa}"
 TILES_DIR="$ROOT_DIR/public/tiles/$CITY"
 CATALOG_PATH="$ROOT_DIR/public/roads/$CITY.json"
-EXTRACT_SCRIPT="$ROOT_DIR/scripts/extract_roads.py"
-CATALOG_SCRIPT="$ROOT_DIR/scripts/build_road_catalog.py"
+LOAD_SCRIPT="$ROOT_DIR/scripts/load_roads.sql"
+CATALOG_SCRIPT="$ROOT_DIR/scripts/build_road_catalog.sql"
 
 if [ ! -f "$INPUT_PATH" ]; then
   echo "Input GeoJSON not found: $INPUT_PATH" >&2
   exit 1
 fi
 
-if [ ! -f "$EXTRACT_SCRIPT" ]; then
-  echo "Missing extract script: $EXTRACT_SCRIPT" >&2
+if [ ! -f "$LOAD_SCRIPT" ]; then
+  echo "Missing load script: $LOAD_SCRIPT" >&2
   exit 1
 fi
 
@@ -26,9 +26,14 @@ if [ ! -f "$CATALOG_SCRIPT" ]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required but not found in PATH." >&2
-  exit 1
+DUCKDB_BIN="${DUCKDB_BIN:-}"
+if [ -z "$DUCKDB_BIN" ]; then
+  if command -v duckdb >/dev/null 2>&1; then
+    DUCKDB_BIN="$(command -v duckdb)"
+  else
+    echo "duckdb not found. Install it or set DUCKDB_BIN." >&2
+    exit 1
+  fi
 fi
 
 TIPPECANOE_BIN="${TIPPECANOE_BIN:-}"
@@ -52,7 +57,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Extracting road features from $INPUT_PATH..."
-python3 "$EXTRACT_SCRIPT" "$INPUT_PATH" > "$tmpfile"
+INPUT_PATH="$INPUT_PATH" OUTPUT_PATH="$tmpfile" \
+  envsubst '${INPUT_PATH} ${OUTPUT_PATH}' < "$LOAD_SCRIPT" | "$DUCKDB_BIN"
 
 echo "Building vector tiles in $TILES_DIR..."
 "$TIPPECANOE_BIN" \
@@ -70,6 +76,7 @@ echo "Building vector tiles in $TILES_DIR..."
   "$tmpfile"
 
 echo "Rebuilding road catalog at $CATALOG_PATH..."
-python3 "$CATALOG_SCRIPT" "$INPUT_PATH" "$CATALOG_PATH"
+INPUT_PATH="$INPUT_PATH" OUTPUT_PATH="$CATALOG_PATH" \
+  envsubst '${INPUT_PATH} ${OUTPUT_PATH}' < "$CATALOG_SCRIPT" | "$DUCKDB_BIN"
 
 echo "Done."
