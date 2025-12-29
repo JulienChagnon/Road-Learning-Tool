@@ -168,7 +168,7 @@ const POPULAR_ROADS_KINGSTON = [
   "Bader Lane"
 ];
 
-const POPULAR_ROAD_REFS_OTTAWA = ["417", "416", "174", "5", "50", "148"];
+const POPULAR_ROAD_REFS_OTTAWA = ["417", "416", "174", "50", "148"];
 const POPULAR_ROAD_REFS_MONTREAL = ["Autoroute Bonaventure (A-10)",
   "Autoroute Chomedey (A-13)",
   "Autoroute Décarie (A-15)",
@@ -234,7 +234,6 @@ const MONTREAL_REF_LABEL_OVERRIDES = new Map<string, string>(
 );
 const OTTAWA_REF_LABEL_OVERRIDES = new Map<string, string>(
   [
-    ["5", "A5"],
     ["50", "50"],
     ["148", "Boulevard des Allumetieres"],
   ].map(([ref, label]) => [toDefaultToken(ref), label] as const)
@@ -274,7 +273,7 @@ const OTTAWA_ALIAS_TOKEN_BY_VALUE = new Map<string, string>(
   ].map(([alias, token]) => [toDefaultToken(alias), toDefaultToken(token)] as const)
 );
 const OTTAWA_HIGHWAY_REF_TOKENS = new Set(
-  ["5", "50"].map((ref) => toDefaultToken(ref))
+  ["50"].map((ref) => toDefaultToken(ref))
 );
 const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
   [
@@ -353,6 +352,10 @@ const buildBoundsCenter = (
   (bounds[0] + bounds[2]) / 2,
   (bounds[1] + bounds[3]) / 2,
 ];
+const getQuizResultDuration = () => {
+  if (typeof window === "undefined") return 500;
+  return window.matchMedia("(max-width: 900px)").matches ? 700 : 500;
+};
 
 
 const CITY_CONFIG: Record<CityKey, CityConfig> = {
@@ -2185,9 +2188,9 @@ export default function MapView() {
       clearQuizResultTimeout();
       setQuizResultState(isCorrect ? "correct" : "incorrect");
       quizResultTimeoutRef.current = setTimeout(() => {
-        setQuizResultState("idle");
-        quizResultTimeoutRef.current = null;
-      }, 2000);
+      setQuizResultState("idle");
+      quizResultTimeoutRef.current = null;
+    }, getQuizResultDuration());
     },
     [clearQuizResultTimeout]
   );
@@ -2690,6 +2693,12 @@ export default function MapView() {
               <span className="quiz-value">
                 {quizPanelValue}
               </span>
+              {!isFinalScore && (
+                <div className="quiz-score-inline" data-state={quizResultState}>
+                  <span className="quiz-score-label">{quizScoreLabel}</span>
+                  <span className="quiz-score-value">{quizScoreText}</span>
+                </div>
+              )}
             </div>
             {!isFinalScore && (
               <div className="quiz-score" data-state={quizResultState}>
