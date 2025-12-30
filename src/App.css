@@ -36,11 +36,36 @@
   z-index: 10; /* Boosted z-index to ensure it floats over all map layers */
 }
 
+.panel-header {
+  position: relative;
+}
+
 .panel-header h1 {
   margin: 6px 0 4px;
   font-family: "Fraunces", "Times New Roman", serif;
   font-size: 2.1rem;
   letter-spacing: 0.5px;
+}
+
+.panel-hide-toggle {
+  display: none;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 0;
+}
+
+.panel-hide-toggle:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
 }
 
 .eyebrow {
@@ -564,11 +589,41 @@ input::placeholder {
     right: 16px;
     width: auto;
     max-height: calc(100% - 32px);
-    padding: 14px 18px;
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .control-panel[data-collapsed="true"] .panel-body {
+    display: none;
+  }
+
+  .control-panel[data-collapsed="true"] .panel-header h1,
+  .control-panel[data-collapsed="true"] .panel-header .subhead {
+    display: none;
+  }
+
+  .panel-header {
+    padding-right: 44px;
   }
 
   .panel-header h1 {
     font-size: 1.8rem;
+    margin: 1px 0 0;
+  }
+
+  .panel-hide-toggle {
+    display: inline-flex;
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+
+  .panel-body {
+    gap: 6px;
+  }
+
+  .field {
+    gap: 2px;
   }
 
   .quiz-only {
@@ -620,5 +675,9 @@ input::placeholder {
   .quiz-end {
     padding: 4px 6px;
     font-size: 0.75rem;
+  }
+
+  .maplibregl-ctrl-attrib {
+    display: none;
   }
 }

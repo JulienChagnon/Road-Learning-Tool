@@ -42,7 +42,7 @@ const BASE_RASTER_STYLE = {
         "https://mt3.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
       ],
       tileSize: 256,
-      attribution: "© Google",
+      attribution: "Satellite Imagery by © Google // Coded by Julien Chagnon",
     },
   },
   layers: [
@@ -72,8 +72,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street",
   "Richmond Road", "Island Park Drive", "Parkdale Avenue", "Terry Fox Drive", "March Road",
   "Kichi Zibi Mikan",
-  "Boulevard Alexandre-Taché", "Boulevard des Allumettières",
-  "Boulevard Maisonneuve",
+  "Boulevard des Allumettières", "Boulevard Maloney Ouest", "Boulevard Maisonneuve",
   "Alexandra Bridge", "Champlain Bridge", "Chaudière Bridge",
   "Macdonald-Cartier Bridge", "Portage Bridge",
   "Hazeldean Road", "Eagleson Road", "Campeau Drive", "Kanata Avenue",
@@ -168,7 +167,7 @@ const POPULAR_ROADS_KINGSTON = [
   "Bader Lane"
 ];
 
-const POPULAR_ROAD_REFS_OTTAWA = ["417", "416", "174", "50", "148"];
+const POPULAR_ROAD_REFS_OTTAWA = ["417", "416", "174", "50", "5"];
 const POPULAR_ROAD_REFS_MONTREAL = ["Autoroute Bonaventure (A-10)",
   "Autoroute Chomedey (A-13)",
   "Autoroute Décarie (A-15)",
@@ -235,7 +234,7 @@ const MONTREAL_REF_LABEL_OVERRIDES = new Map<string, string>(
 const OTTAWA_REF_LABEL_OVERRIDES = new Map<string, string>(
   [
     ["50", "50"],
-    ["148", "Boulevard des Allumetieres"],
+    ["5", "Avenue de la Gatineau (A5)"],
   ].map(([ref, label]) => [toDefaultToken(ref), label] as const)
 );
 const OTTAWA_REF_LABEL_EXCLUSIONS = new Map<string, Set<string>>([
@@ -245,17 +244,9 @@ const OTTAWA_REF_LABEL_EXCLUSIONS = new Map<string, Set<string>>([
       [
         "Macdonald-Cartier Bridge",
         "Pont Macdonald-Cartier Bridge",
-      ].map((name) => toDefaultToken(name))
-    ),
-  ],
-  [
-    toDefaultToken("148"),
-    new Set(
-      [
-        "Bd Maloney O",
-        "Bd Maloney Ouest",
-        "Boulevard Maloney O",
-        "Boulevard Maloney Ouest",
+        "Stittsville Main Street",
+        "Huntley Road",
+        "Carp Road"
       ].map((name) => toDefaultToken(name))
     ),
   ],
@@ -273,7 +264,7 @@ const OTTAWA_ALIAS_TOKEN_BY_VALUE = new Map<string, string>(
   ].map(([alias, token]) => [toDefaultToken(alias), toDefaultToken(token)] as const)
 );
 const OTTAWA_HIGHWAY_REF_TOKENS = new Set(
-  ["50"].map((ref) => toDefaultToken(ref))
+  ["50", "5"].map((ref) => toDefaultToken(ref))
 );
 const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
   [
@@ -283,10 +274,7 @@ const OTTAWA_NAME_LABEL_OVERRIDES = new Map<string, string>(
     ["Pont du Portage", "Portage Bridge"],
     ["Pont du Portage Bridge", "Portage Bridge"],
     ["Pont de la Chaudière", "Chaudière Bridge"],
-    ["Bd Maloney O", "Route 148"],
-    ["Bd Maloney Ouest", "Route 148"],
-    ["Boulevard Maloney O", "Route 148"],
-    ["Boulevard Maloney Ouest", "Route 148"],
+    ["Boulevard Maloney Ouest", "Boulevard Maloney O"],
   ].map(([name, label]) => [toDefaultToken(name), label] as const)
 );
 const KINGSTON_NAME_LABEL_OVERRIDES = new Map<string, string>(
@@ -516,12 +504,9 @@ const QUIZ_BASE_ROAD_COLOR = "#ffffff85";
 const QUIZ_CORRECT_ROAD_COLOR = "#4fb360ff";
 const QUIZ_INCORRECT_ROAD_COLOR = "#dd5656ff";
 
-const ALLUMETIERES_TOKEN = toDefaultToken("Boulevard des Allumettières");
-const ALLUMETIERES_COLOR = stringToColor(ALLUMETIERES_TOKEN);
 
 const ROAD_COLOR_OVERRIDES: Record<string, string> = {
-  [ALLUMETIERES_TOKEN]: ALLUMETIERES_COLOR,
-  [toDefaultToken("148")]: ALLUMETIERES_COLOR,
+  [toDefaultToken("Boulevard Maloney Ouest")]: "#43ffe0ff",
   [toDefaultToken("Parkdale Avenue")]: "#2563eb",
   [toDefaultToken("Bank Street")]: "#b5d2a6ff",
   [toDefaultToken("Wellington Street")]: "#d23d3dff",
@@ -643,7 +628,7 @@ const GATINEAU_ROAD_NAME_TOKENS = [
   "Boulevard de Maisonneuve",
   "Maisonneuve Street",
 ].map((name) => toDefaultToken(name));
-const GATINEAU_ROAD_REF_TOKENS = ["5", "50", "148"].map((ref) =>
+const GATINEAU_ROAD_REF_TOKENS = ["5", "50"].map((ref) =>
   toDefaultToken(ref)
 );
 const GATINEAU_ROAD_TOKEN_SET = new Set([
@@ -854,7 +839,6 @@ const DIRECTIONAL_SUFFIX_PARTS = new Set([
   "est",
   "ouest",
 ]);
-
 const normalizeRoadToken = (value: string) => value.trim().toLowerCase();
 const foldRoadToken = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -1095,6 +1079,48 @@ const buildStrictNameFilter = (
 
   if (!highwayFilter) return strictFilter;
   return ["all", highwayFilter, strictFilter] as FilterSpecification;
+};
+
+const buildRefMatchFilter = (
+  refs: string[],
+  includeHighwayFilter: boolean
+): FilterSpecification | null => {
+  if (!refs.length) return null;
+  const refFilters: FilterSpecification[] = [];
+  const refsWithoutExclusions: string[] = [];
+
+  for (const ref of refs) {
+    const exclusions =
+      ref === toDefaultToken("5")
+        ? OTTAWA_REF_LABEL_EXCLUSIONS.get(ref)
+        : null;
+    if (!exclusions?.size) {
+      refsWithoutExclusions.push(ref);
+      continue;
+    }
+    refFilters.push([
+      "all",
+      ["in", ROAD_REF_EXPRESSION, ["literal", [ref]]],
+      ["!", ["in", ROAD_NAME_EXPRESSION, ["literal", Array.from(exclusions)]]],
+    ] as FilterSpecification);
+  }
+
+  if (refsWithoutExclusions.length) {
+    refFilters.push([
+      "in",
+      ROAD_REF_EXPRESSION,
+      ["literal", refsWithoutExclusions],
+    ] as FilterSpecification);
+  }
+
+  if (!refFilters.length) return null;
+  const baseFilter =
+    refFilters.length === 1
+      ? refFilters[0]
+      : (["any", ...refFilters] as FilterSpecification);
+  return includeHighwayFilter
+    ? (["all", MAJOR_HIGHWAY_FILTER, baseFilter] as FilterSpecification)
+    : baseFilter;
 };
 
 
@@ -1529,19 +1555,13 @@ const buildRoadFilter = (
   const standardMatchedRefs = highwayMatchedRefs.length
     ? matchIndex.matchedRefs.filter((ref) => !highwayMatchedRefs.includes(ref))
     : matchIndex.matchedRefs;
-  if (standardMatchedRefs.length) {
-    filters.push([
-      "in",
-      ROAD_REF_EXPRESSION,
-      ["literal", standardMatchedRefs],
-    ]);
+  const standardRefFilter = buildRefMatchFilter(standardMatchedRefs, false);
+  if (standardRefFilter) {
+    filters.push(standardRefFilter);
   }
-  if (highwayMatchedRefs.length) {
-    filters.push([
-      "all",
-      MAJOR_HIGHWAY_FILTER,
-      ["in", ROAD_REF_EXPRESSION, ["literal", highwayMatchedRefs]],
-    ]);
+  const highwayRefFilter = buildRefMatchFilter(highwayMatchedRefs, true);
+  if (highwayRefFilter) {
+    filters.push(highwayRefFilter);
   }
   if (extraFilters.length) {
     filters.push(...extraFilters);
@@ -1962,6 +1982,7 @@ export default function MapView() {
   const [roadCatalog, setRoadCatalog] = useState<RoadCatalog | null>(null);
   const [roadInput, setRoadInput] = useState("");
   const [isEditingRoads, setIsEditingRoads] = useState(false);
+  const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   const [includeGatineauRoads, setIncludeGatineauRoads] = useState(true);
   const [city, setCity] = useState<CityKey>(initialCity);
   const [isQuizActive, setIsQuizActive] = useState(initialIsQuizActive);
@@ -2682,7 +2703,10 @@ export default function MapView() {
   return (
     <div className="app-shell">
       <div ref={mapContainer} className="map-canvas" />
-      <aside className="control-panel">
+      <aside
+        className="control-panel"
+        data-collapsed={isPanelCollapsed ? "true" : "false"}
+      >
         {isQuizActive ? (
           <div className="quiz-only">
             <div
@@ -2732,9 +2756,18 @@ export default function MapView() {
               <p className="subhead">
                 {activeCity.tagline}
               </p>
+              <button
+                type="button"
+                className="panel-hide-toggle"
+                aria-controls="panel-body"
+                aria-expanded={!isPanelCollapsed}
+                onClick={() => setIsPanelCollapsed((prev) => !prev)}
+              >
+                {isPanelCollapsed ? "Show" : "Hide"}
+              </button>
             </div>
 
-            <div className="panel-body">
+            <div className="panel-body" id="panel-body">
               <label className="field">
                 <span>City</span>
                 <select
