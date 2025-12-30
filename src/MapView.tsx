@@ -624,6 +624,8 @@ const GATINEAU_ROAD_NAME_TOKENS = [
   "Boulevard Alexandre Tache",
   "Boulevard des Allumettières",
   "Boulevard des Allumetieres",
+  "Boulevard Maloney Ouest",
+  "Boulevard Maloney O",
   "Boulevard Maisonneuve",
   "Boulevard de Maisonneuve",
   "Maisonneuve Street",
