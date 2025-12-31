@@ -5,12 +5,14 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ChangeEvent,
 } from "react";
 import maplibregl, {
   type ExpressionSpecification,
   type FilterSpecification,
   type MapGeoJSONFeature,
   type MapMouseEvent,
+  type MapSourceDataEvent,
 } from "maplibre-gl";
 
 type CityKey = "ottawa" | "montreal" | "kingston";
@@ -30,29 +32,37 @@ type QuizResultState = "idle" | "correct" | "incorrect";
 
 const DEFAULT_CITY: CityKey = "ottawa";
 
-const BASE_RASTER_STYLE = {
-  version: 8,
-  sources: {
-    googleSat: {
-      type: "raster",
-      tiles: [
-        "https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
-        "https://mt1.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
-        "https://mt2.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
-        "https://mt3.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}",
-      ],
-      tileSize: 256,
-      attribution: "Satellite Imagery by © Google // Coded by Julien Chagnon",
+const BASE_TILE_SIZE = 256;
+const getRasterScale = () => {
+  if (typeof window === "undefined") return 1;
+  return window.devicePixelRatio > 1 ? 2 : 1;
+};
+const buildRasterStyle = (scale: number) => {
+  const scaleParam = scale > 1 ? `&scale=${scale}` : "";
+  return {
+    version: 8,
+    sources: {
+      googleSat: {
+        type: "raster",
+        tiles: [
+          `https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}${scaleParam}`,
+          `https://mt1.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}${scaleParam}`,
+          `https://mt2.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}${scaleParam}`,
+          `https://mt3.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}${scaleParam}`,
+        ],
+        tileSize: BASE_TILE_SIZE * scale,
+        attribution: "Satellite Imagery by © Google // Coded by Julien Chagnon",
+      },
     },
-  },
-  layers: [
-    {
-      id: "base",
-      type: "raster",
-      source: "googleSat",
-      paint: { "raster-opacity": 1 },
-    },
-  ],
+    layers: [
+      {
+        id: "base",
+        type: "raster",
+        source: "googleSat",
+        paint: { "raster-opacity": 1 },
+      },
+    ],
+  };
 };
 
 const ROAD_SOURCE_ID = "roads-source";
@@ -318,12 +328,12 @@ const MONTREAL_TILE_BOUNDS: [number, number, number, number] = [
   45.697687,
 ];
 const KINGSTON_TILE_BOUNDS: [number, number, number, number] = [
-  -76.544148,
-  44.195596,
-  -76.425662,
-  44.290928,
+  -76.528833,
+  44.217435,
+  -76.471204,
+  44.25584,
 ];
-const KINGSTON_CENTER_OFFSET: [number, number] = [-0.009, -0.013];
+const KINGSTON_CENTER_OFFSET: [number, number] = [0.006, -0.011];
 const buildMapBounds = (
   bounds: [number, number, number, number],
   padX = 0.8,
@@ -377,7 +387,7 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
       buildBoundsCenter(KINGSTON_TILE_BOUNDS)[0] + KINGSTON_CENTER_OFFSET[0],
       buildBoundsCenter(KINGSTON_TILE_BOUNDS)[1] + KINGSTON_CENTER_OFFSET[1],
     ],
-    zoom: 14,
+    zoom: 13.4,
     tileBounds: KINGSTON_TILE_BOUNDS,
     mapBounds: buildMapBounds(KINGSTON_TILE_BOUNDS),
     tilePath: "assets/tiles/kingston/{z}/{x}/{y}.pbf",
@@ -806,6 +816,7 @@ const buildRoadLabelTextExpression = (
 
 const MIN_NAME_SUBSTRING_LENGTH = 3;
 const MIN_REF_SUBSTRING_LENGTH = 1;
+const ALWAYS_FALSE_EXPRESSION: ExpressionSpecification = ["literal", false];
 const TOKEN_PARTS_SPLIT_REGEX = /[^a-z0-9]+/i;
 const NUMERIC_PART_REGEX = /^\d+$/;
 const MAJOR_HIGHWAY_TYPES = [
@@ -872,7 +883,7 @@ const buildTokenMatchExpression = (
   minSubstringLength: number
 ): ExpressionSpecification => {
   const parts = getTokenParts(token);
-  if (!parts.length) return ["==", 1, 0];
+  if (!parts.length) return ALWAYS_FALSE_EXPRESSION;
   if (parts.length > 1) {
     const partExpressions = parts.map(
       (part) => ["in", part, fieldExpression] as ExpressionSpecification
@@ -1387,7 +1398,7 @@ const buildRoadFilter = (
   options?: { highwayRefTokens?: Set<string> | null }
 ): FilterSpecification => {
   if (!roadTokens.length) {
-    return ["==", 1, 0];
+    return ALWAYS_FALSE_EXPRESSION;
   }
   const highwayRefTokens = options?.highwayRefTokens ?? null;
   if (!matchIndex) {
@@ -1465,7 +1476,7 @@ const buildRoadFilter = (
     if (extraFilters.length) {
       filters.push(...extraFilters);
     }
-    if (!filters.length) return ["==", 1, 0];
+    if (!filters.length) return ALWAYS_FALSE_EXPRESSION;
     return [
       "all",
       MAIN_STREET_DOWNTOWN_FILTER,
@@ -1568,7 +1579,7 @@ const buildRoadFilter = (
   if (extraFilters.length) {
     filters.push(...extraFilters);
   }
-  if (!filters.length) return ["==", 1, 0];
+  if (!filters.length) return ALWAYS_FALSE_EXPRESSION;
   return [
     "all",
     MAIN_STREET_DOWNTOWN_FILTER,
@@ -1974,7 +1985,10 @@ export default function MapView() {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapCityRef = useRef<CityKey>(initialCity);
+  const roadSourceContentSeenRef = useRef(false);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [roadsLoading, setRoadsLoading] = useState(true);
+  const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [activeRoadTokens, setActiveRoadTokens] = useState<string[]>(
     initialTokens
   );
@@ -2310,6 +2324,7 @@ export default function MapView() {
   useEffect(() => {
     let cancelled = false;
     setRoadCatalog(null);
+    setIsCatalogLoading(true);
 
     const loadCatalog = async () => {
       try {
@@ -2320,9 +2335,11 @@ export default function MapView() {
         const data = (await response.json()) as RoadCatalog;
         if (cancelled) return;
         setRoadCatalog(data);
+        setIsCatalogLoading(false);
       } catch (error) {
         if (cancelled) return;
         console.error("Road catalog error:", error);
+        setIsCatalogLoading(false);
       }
     };
 
@@ -2335,9 +2352,10 @@ export default function MapView() {
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
+    const rasterScale = getRasterScale();
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: BASE_RASTER_STYLE as any,
+      style: buildRasterStyle(rasterScale) as any,
       center: CITY_CONFIG[initialCity].center,
       zoom: CITY_CONFIG[initialCity].zoom,
       maxBounds: CITY_CONFIG[initialCity].mapBounds,
@@ -2348,6 +2366,18 @@ export default function MapView() {
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }));
+    roadSourceContentSeenRef.current = false;
+    setRoadsLoading(true);
+
+    const handleSourceData = (event: MapSourceDataEvent) => {
+      if (event.sourceId !== ROAD_SOURCE_ID) return;
+      if (event.sourceDataType === "content") {
+        roadSourceContentSeenRef.current = true;
+      }
+      if (!roadSourceContentSeenRef.current) return;
+      if (!event.isSourceLoaded) return;
+      setRoadsLoading(false);
+    };
 
     const handleLoad = () => {
       setMapLoaded(true);
@@ -2383,11 +2413,14 @@ export default function MapView() {
     };
 
     map.on("load", handleLoad);
+    map.on("sourcedata", handleSourceData);
     map.on("error", (e) => {
       console.error("Map Error:", e);
     });
 
     return () => {
+      map.off("load", handleLoad);
+      map.off("sourcedata", handleSourceData);
       map.remove();
       mapRef.current = null;
     };
@@ -2398,6 +2431,8 @@ export default function MapView() {
     if (!map || !mapLoaded) return;
     if (mapCityRef.current === city) return;
 
+    roadSourceContentSeenRef.current = false;
+    setRoadsLoading(true);
     const nextTokens = CITY_CONFIG[city].defaultTokens;
     const nextLineColor = buildRoadColorExpression(nextTokens);
     const nextFilterOverrides = getRoadFilterOverrides(city, nextTokens);
@@ -2695,6 +2730,7 @@ export default function MapView() {
     (isFinalScore
       ? quizScoreText
       : quizMessage ?? "Pan or zoom to load a prompt.");
+  const showRoadsLoading = roadsLoading || isCatalogLoading;
   const quizScoreLabel =
     quizResultState === "correct"
       ? "Correct!"
@@ -2705,6 +2741,11 @@ export default function MapView() {
   return (
     <div className="app-shell">
       <div ref={mapContainer} className="map-canvas" />
+      {showRoadsLoading && (
+        <div className="roads-loading" role="status" aria-live="polite">
+          Roads loading...
+        </div>
+      )}
       <aside
         className="control-panel"
         data-collapsed={isPanelCollapsed ? "true" : "false"}
@@ -2774,7 +2815,12 @@ export default function MapView() {
                 <span>City</span>
                 <select
                   value={city}
-                  onChange={(e) => setCity(e.target.value as CityKey)}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                    roadSourceContentSeenRef.current = false;
+                    setRoadsLoading(true);
+                    setIsCatalogLoading(true);
+                    setCity(event.target.value as CityKey);
+                  }}
                 >
                   {Object.entries(CITY_CONFIG).map(([key, config]) => (
                     <option key={key} value={key}>
