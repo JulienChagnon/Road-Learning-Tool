@@ -79,7 +79,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Elgin Street", "Laurier Avenue", "Laurier Avenue West", "Wellington Street", "Bronson Avenue", "Baseline Road",
   "Merivale Road", "Woodroffe Avenue", "Greenbank Road", "Fisher Avenue",
   "Riverside Drive", "St. Laurent Boulevard", "Montreal Road", "Innes Road", "Blair Road", "Prince of Wales Drive", "Heron Road", "Main Street",
-  "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street",
+  "Lees Avenue", "King Edward Avenue", "Nicholas Street", "Scott Street", "Ogilvie Road",
   "Richmond Road", "Island Park Drive", "Parkdale Avenue", "Terry Fox Drive", "March Road",
   "Kichi Zibi Mikan",
   "Boulevard des Allumettières", "Boulevard Maloney Ouest", "Boulevard Maisonneuve",
@@ -93,7 +93,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Metcalfe Street", "O'Connor Street", "Booth Street",
   "Wellington Street West", "Maitland Avenue", "Gladstone Avenue", "St. Joseph Boulevard",
   "Jeanne D'Arc Boulevard", "Aviation Parkway", "Sir-George-\u00c9tienne-Cartier Parkway",
-  "St. Patrick Street", "Murray Street", "Beechwood Avenue"
+  "St. Patrick Street", "Murray Street", "Smyth Road"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -257,6 +257,14 @@ const OTTAWA_REF_LABEL_EXCLUSIONS = new Map<string, Set<string>>([
         "Huntley Road",
         "Carp Road"
       ].map((name) => toDefaultToken(name))
+    ),
+  ],
+  [
+    toDefaultToken("50"),
+    new Set(
+      ["Coventry Road", "Coventry Rd", "Ogilvie Road", "Ogilvie Rd"].map((name) =>
+        toDefaultToken(name)
+      )
     ),
   ],
 ]);
@@ -533,6 +541,8 @@ const ROAD_COLOR_OVERRIDES: Record<string, string> = {
   [toDefaultToken("Chaudière Bridge")]: "#b83d99ff",
   [toDefaultToken("Kichi Zibi Mikan")]: "#99d272ff",
   [toDefaultToken("MacDonald-Cartier Bridge")]: "#d69749ff",
+  [toDefaultToken("Ogilvie Road")]: "#7222daff",
+  [toDefaultToken("Smyth Road")]: "#c22d00ff",
 };
 
 
@@ -648,6 +658,10 @@ const GATINEAU_ROAD_TOKEN_SET = new Set([
 const GATINEAU_EXEMPT_NAME_TOKENS = [
   "Macdonald-Cartier Bridge",
   "Pont Macdonald-Cartier Bridge",
+  "Coventry Road",
+  "Coventry Rd",
+  "Ogilvie Road",
+  "Ogilvie Rd",
 ].map((name) => toDefaultToken(name));
 const GATINEAU_EXEMPT_NAME_FILTER = ([
   "any",
