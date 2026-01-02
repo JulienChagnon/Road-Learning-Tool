@@ -91,8 +91,7 @@ const POPULAR_ROADS_OTTAWA = [
   "Queen Elizabeth Driveway", "Sussex Drive", "George Street", "York Street", "Clarence Street",
   "Dalhousie Street", "Slater Street", "Albert Street",
   "Metcalfe Street", "O'Connor Street", "Booth Street",
-  "Wellington Street West", "Maitland Avenue", "Gladstone Avenue",
-  "Ogilvie Road", "St. Joseph Boulevard",
+  "Wellington Street West", "Maitland Avenue", "Gladstone Avenue", "St. Joseph Boulevard",
   "Jeanne D'Arc Boulevard", "Aviation Parkway", "Sir-George-\u00c9tienne-Cartier Parkway",
   "St. Patrick Street", "Murray Street", "Beechwood Avenue"
 ];
@@ -528,7 +527,6 @@ const ROAD_COLOR_OVERRIDES: Record<string, string> = {
   [toDefaultToken("Union Street")]: "#ffa16fff",
   [toDefaultToken("Queen Elizabeth Driveway")]: "#6d0978ff",
   [toDefaultToken("Terry Fox Drive")]: "#eb5c5cff",
-  [toDefaultToken("Ogilvie Road")]: "#0a9396ff",
   [toDefaultToken("174")]: "#eae685ff",
   [toDefaultToken("St. Laurent Boulevard")]: "#f78dbbff",
   [toDefaultToken("Murray Street")]: "#ff6214ff",
@@ -1103,10 +1101,7 @@ const buildRefMatchFilter = (
   const refsWithoutExclusions: string[] = [];
 
   for (const ref of refs) {
-    const exclusions =
-      ref === toDefaultToken("5")
-        ? OTTAWA_REF_LABEL_EXCLUSIONS.get(ref)
-        : null;
+    const exclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(ref);
     if (!exclusions?.size) {
       refsWithoutExclusions.push(ref);
       continue;
