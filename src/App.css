@@ -129,7 +129,7 @@ select {
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--input-bg);
   color: var(--text);
   transition: border-color 0.2s ease, background 0.2s ease;
 }
@@ -150,7 +150,7 @@ select:focus-visible,
 select:active {
   outline: none;
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--input-bg);
   color: #000000;
 }
 
@@ -512,6 +512,34 @@ input::placeholder {
   overflow: auto;
 }
 
+.control-panel,
+.road-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--input-bg) transparent;
+}
+
+.control-panel::-webkit-scrollbar,
+.road-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.control-panel::-webkit-scrollbar-track,
+.road-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.control-panel::-webkit-scrollbar-thumb,
+.road-list::-webkit-scrollbar-thumb {
+  background-color: var(--input-bg);
+  border-radius: 999px;
+  border: none;
+}
+
+.control-panel::-webkit-scrollbar-corner,
+.road-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .road-item {
   display: flex;
   align-items: center;
@@ -550,7 +578,7 @@ input::placeholder {
 
 .road-input input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--input-bg);
   color: #000000;
 }
 

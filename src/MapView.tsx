@@ -93,7 +93,8 @@ const POPULAR_ROADS_OTTAWA = [
   "Metcalfe Street", "O'Connor Street", "Booth Street",
   "Wellington Street West", "Maitland Avenue", "Gladstone Avenue", "St. Joseph Boulevard",
   "Jeanne D'Arc Boulevard", "Aviation Parkway", "Sir-George-\u00c9tienne-Cartier Parkway",
-  "St. Patrick Street", "Murray Street", "Smyth Road"
+  "St. Patrick Street", "Murray Street", "Smyth Road", "Palladium Drive", "Castlefrank Road", 
+  "Rochester Street", "Kent Street", "Lyon Street", "Airport Parkway", "Queen Street"
 ];
 
 const POPULAR_ROADS_MONTREAL = [
@@ -576,6 +577,38 @@ const buildAnyNameInExpression = (names: string[]) =>
       (expr) => ["in", expr, ["literal", names]] as ExpressionSpecification
     ),
   ] as ExpressionSpecification);
+
+const buildRefMatchExpression = (refs: string[]) => {
+  if (!refs.length) return null;
+  const refFilters: ExpressionSpecification[] = [];
+  const plainRefs: string[] = [];
+
+  for (const ref of refs) {
+    const exclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(ref);
+    if (!exclusions?.size) {
+      plainRefs.push(ref);
+      continue;
+    }
+    refFilters.push([
+      "all",
+      ["in", ROAD_REF_EXPRESSION, ["literal", [ref]]],
+      ["!", buildAnyNameInExpression(Array.from(exclusions))],
+    ] as ExpressionSpecification);
+  }
+
+  if (plainRefs.length) {
+    refFilters.push([
+      "in",
+      ROAD_REF_EXPRESSION,
+      ["literal", plainRefs],
+    ] as ExpressionSpecification);
+  }
+
+  if (!refFilters.length) return null;
+  return refFilters.length === 1
+    ? refFilters[0]
+    : (["any", ...refFilters] as ExpressionSpecification);
+};
 const ROAD_REF_EXPRESSION: ExpressionSpecification = [
   "downcase",
   ["coalesce", ["get", "ref"], ""],
@@ -752,10 +785,7 @@ const buildOttawaLabelTextExpression = (
         ? ([
             "all",
             baseMatch,
-            [
-              "!",
-              ["in", ROAD_NAME_EXPRESSION, ["literal", Array.from(excludedNames)]],
-            ],
+            ["!", buildAnyNameInExpression(Array.from(excludedNames))],
           ] as ExpressionSpecification)
         : baseMatch;
       cases.push(match, label);
@@ -785,7 +815,7 @@ const buildOttawaLabelTextExpression = (
       ? ([
           "all",
           baseMatch,
-          ["!", ["in", ROAD_NAME_EXPRESSION, ["literal", Array.from(excludedNames)]]],
+          ["!", buildAnyNameInExpression(Array.from(excludedNames))],
         ] as ExpressionSpecification)
       : baseMatch;
     cases.push(match, label);
@@ -1123,7 +1153,7 @@ const buildRefMatchFilter = (
     refFilters.push([
       "all",
       ["in", ROAD_REF_EXPRESSION, ["literal", [ref]]],
-      ["!", ["in", ROAD_NAME_EXPRESSION, ["literal", Array.from(exclusions)]]],
+      ["!", buildAnyNameInExpression(Array.from(exclusions))],
     ] as FilterSpecification);
   }
 
@@ -1652,10 +1682,10 @@ const buildRoadColorExpression = (
       );
     }
     if (refMatches?.length) {
-      pairs.push(
-        ["in", ROAD_REF_EXPRESSION, ["literal", refMatches]],
-        tokenColor
-      );
+      const refMatchExpression = buildRefMatchExpression(refMatches);
+      if (refMatchExpression) {
+        pairs.push(refMatchExpression, tokenColor);
+      }
     }
     return pairs;
   });
@@ -1714,10 +1744,10 @@ const buildRoadOpacityExpression = (
       );
     }
     if (refMatches?.length) {
-      pairs.push(
-        ["in", ROAD_REF_EXPRESSION, ["literal", refMatches]],
-        1
-      );
+      const refMatchExpression = buildRefMatchExpression(refMatches);
+      if (refMatchExpression) {
+        pairs.push(refMatchExpression, 1);
+      }
     }
     return pairs;
   });
@@ -1800,6 +1830,16 @@ const getVisibleRoadTokens = (
   for (const token of roadTokens) {
     if (excludeTokens.has(token)) continue;
     const tokenParts = getFoldedTokenParts(token);
+    const refExclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(token);
+    if (refExclusions?.size) {
+      const matchesFeature = features.some((feature) =>
+        featureMatchesToken(feature, tokenParts, token)
+      );
+      if (matchesFeature) {
+        candidates.push(token);
+      }
+      continue;
+    }
     const matchesName = namePartsList.some((nameParts) =>
       matchesNameTokenParts(tokenParts, nameParts)
     );
@@ -1816,7 +1856,8 @@ const getVisibleRoadTokens = (
 
 const featureMatchesToken = (
   feature: MapGeoJSONFeature,
-  tokenParts: string[]
+  tokenParts: string[],
+  token: string
 ) => {
   const properties = feature.properties ?? {};
   const nameValues = [
@@ -1841,6 +1882,16 @@ const featureMatchesToken = (
       normalizedRef &&
       matchesRefTokenParts(tokenParts, getTokenParts(normalizedRef))
     ) {
+      const exclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(token);
+      if (exclusions?.size) {
+        for (const value of nameValues) {
+          if (typeof value !== "string") continue;
+          const normalizedName = normalizeRoadToken(value);
+          if (normalizedName && exclusions.has(normalizedName)) {
+            return false;
+          }
+        }
+      }
       return true;
     }
   }
@@ -2122,6 +2173,21 @@ export default function MapView() {
     });
     return overrides;
   }, [quizCorrectTokens, quizIncorrectTokens]);
+  const quizColorTokens = useMemo(() => {
+    if (!quizFoundTokens.length) return quizFoundTokens;
+    if (!quizIncorrectTokens.length) return quizFoundTokens;
+    const incorrectSet = new Set(quizIncorrectTokens);
+    const incorrect: string[] = [];
+    const correct: string[] = [];
+    quizFoundTokens.forEach((token) => {
+      if (incorrectSet.has(token)) {
+        incorrect.push(token);
+      } else {
+        correct.push(token);
+      }
+    });
+    return [...incorrect, ...correct];
+  }, [quizFoundTokens, quizIncorrectTokens]);
   const listedRoads = useMemo<VisibleRoad[]>(() => {
     const tokenLabels = roadMatchIndex?.tokenLabels;
     return [...effectiveActiveRoadTokens]
@@ -2497,7 +2563,7 @@ export default function MapView() {
     );
     const lineColor = isQuizActive
       ? buildRoadColorExpression(
-          quizFoundTokens,
+          quizColorTokens,
           quizFoundMatchIndex,
           QUIZ_BASE_ROAD_COLOR,
           quizColorOverrides ?? undefined
@@ -2548,6 +2614,7 @@ export default function MapView() {
     includeGatineauRoads,
     isQuizActive,
     mapLoaded,
+    quizColorTokens,
     quizFoundMatchIndex,
     quizFoundTokens,
     quizColorOverrides,
@@ -2652,7 +2719,7 @@ export default function MapView() {
       quizAttemptedTokenRef.current = quizTargetToken;
 
       const isMatch = features.some((feature) =>
-        featureMatchesToken(feature, tokenParts)
+        featureMatchesToken(feature, tokenParts, quizTargetToken)
       );
       const nextGuessCount = quizGuessCount + 1;
       const nextCorrectCount = quizCorrectCount + (isMatch ? 1 : 0);
