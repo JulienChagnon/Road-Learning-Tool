@@ -1780,80 +1780,6 @@ const getQuizEmptyMessage = (correctCount: number, guessCount: number) => {
   return "No selected roads visible. Pan or zoom for another prompt.";
 };
 
-const collectVisibleRoadParts = (features: MapGeoJSONFeature[]) => {
-  const namePartsList: string[][] = [];
-  const refPartsList: string[][] = [];
-  const seenNames = new Set<string>();
-  const seenRefs = new Set<string>();
-
-  for (const feature of features) {
-    const properties = feature.properties ?? {};
-    const nameValues = [
-      properties["name"],
-      properties["name:en"],
-      properties["name_en"],
-    ];
-
-    for (const value of nameValues) {
-      if (typeof value !== "string") continue;
-      const normalized = normalizeRoadToken(value);
-      if (!normalized || seenNames.has(normalized)) continue;
-      seenNames.add(normalized);
-      namePartsList.push(getNameParts(normalized));
-    }
-
-    const refValue = properties["ref"];
-    if (typeof refValue !== "string") continue;
-    const normalizedRef = normalizeRoadToken(refValue);
-    if (!normalizedRef || seenRefs.has(normalizedRef)) continue;
-    seenRefs.add(normalizedRef);
-    refPartsList.push(getTokenParts(normalizedRef));
-  }
-
-  return { namePartsList, refPartsList };
-};
-
-const getVisibleRoadTokens = (
-  map: maplibregl.Map,
-  excludeTokens: Set<string>,
-  roadTokens: string[],
-  layerId: string = ROAD_BASE_LAYER_ID
-) => {
-  const features = map.queryRenderedFeatures({
-    layers: [layerId],
-  });
-  if (!features.length) return [];
-
-  const { namePartsList, refPartsList } = collectVisibleRoadParts(features);
-  const candidates: string[] = [];
-
-  for (const token of roadTokens) {
-    if (excludeTokens.has(token)) continue;
-    const tokenParts = getFoldedTokenParts(token);
-    const refExclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(token);
-    if (refExclusions?.size) {
-      const matchesFeature = features.some((feature) =>
-        featureMatchesToken(feature, tokenParts, token)
-      );
-      if (matchesFeature) {
-        candidates.push(token);
-      }
-      continue;
-    }
-    const matchesName = namePartsList.some((nameParts) =>
-      matchesNameTokenParts(tokenParts, nameParts)
-    );
-    const matchesRef = refPartsList.some((refParts) =>
-      matchesRefTokenParts(tokenParts, refParts)
-    );
-    if (matchesName || matchesRef) {
-      candidates.push(token);
-    }
-  }
-
-  return candidates;
-};
-
 const featureMatchesToken = (
   feature: MapGeoJSONFeature,
   tokenParts: string[],
@@ -2311,14 +2237,12 @@ export default function MapView() {
     (excludeTokens: string[], roadTokens: string[]) => {
       const map = mapRef.current;
       if (!map || !mapLoaded || !roadTokens.length) return [];
-      const candidates = getVisibleRoadTokens(
-        map,
-        new Set(excludeTokens),
-        roadTokens,
-        ROAD_LAYER_ID
+      const excludeSet = new Set(excludeTokens);
+      const remainingTokens = roadTokens.filter(
+        (token) => !excludeSet.has(token)
       );
-      if (!candidates.length) return [];
-      return shuffleTokens(candidates);
+      if (!remainingTokens.length) return [];
+      return shuffleTokens(remainingTokens);
     },
     [mapLoaded]
   );
