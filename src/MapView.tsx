@@ -355,15 +355,8 @@ const KINGSTON_TILE_BOUNDS: [number, number, number, number] = [
   44.25584,
 ];
 const KINGSTON_CENTER_OFFSET: [number, number] = [0.006, -0.011];
-const KINGSTON_CAMPUS_BOUNDS: [number, number, number, number] = [
-  -76.528087,
-  44.211901,
-  -76.451312,
-  44.24761,
-];
 const KINGSTON_CAMPUS_CENTER: [number, number] = [-76.495056, 44.22626];
 const KINGSTON_CAMPUS_ZOOM = 15.5;
-const KINGSTON_CAMPUS_MIN_ZOOM = 15;
 const buildMapBounds = (
   bounds: [number, number, number, number],
   padX = 0.8,
@@ -3200,9 +3193,9 @@ export default function MapView() {
         minZoom: map.getMinZoom(),
       };
     }
-    const applyCampusBounds = () => {
-      map.setMaxBounds(KINGSTON_CAMPUS_BOUNDS);
-      map.setMinZoom(KINGSTON_CAMPUS_MIN_ZOOM);
+    const applyDefaultBounds = () => {
+      map.setMaxBounds(CITY_CONFIG.kingston.mapBounds);
+      map.setMinZoom(ROAD_TILE_MIN_ZOOM);
     };
     const currentCenter = map.getCenter();
     const needsMove =
@@ -3210,7 +3203,7 @@ export default function MapView() {
       Math.abs(currentCenter.lat - KINGSTON_CAMPUS_CENTER[1]) > 0.0001 ||
       Math.abs(map.getZoom() - KINGSTON_CAMPUS_ZOOM) > 0.01;
     if (!needsMove) {
-      applyCampusBounds();
+      applyDefaultBounds();
       return;
     }
     map.stop();
@@ -3244,7 +3237,7 @@ export default function MapView() {
           });
           map.off("moveend", handleMoveEnd);
           buildingQuizMoveEndHandlerRef.current = null;
-          applyCampusBounds();
+          applyDefaultBounds();
           return;
         }
         buildingQuizTransitionAttemptRef.current += 1;
@@ -3258,7 +3251,7 @@ export default function MapView() {
       }
       map.off("moveend", handleMoveEnd);
       buildingQuizMoveEndHandlerRef.current = null;
-      applyCampusBounds();
+      applyDefaultBounds();
     };
     buildingQuizMoveEndHandlerRef.current = handleMoveEnd;
     map.on("moveend", handleMoveEnd);
