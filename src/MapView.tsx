@@ -357,6 +357,7 @@ const KINGSTON_TILE_BOUNDS: [number, number, number, number] = [
 const KINGSTON_CENTER_OFFSET: [number, number] = [0.006, -0.011];
 const KINGSTON_CAMPUS_CENTER: [number, number] = [-76.495056, 44.22626];
 const KINGSTON_CAMPUS_ZOOM = 15.5;
+const KINGSTON_CAMPUS_MOBILE_ZOOM = 14.8;
 const buildMapBounds = (
   bounds: [number, number, number, number],
   padX = 0.8,
@@ -376,6 +377,12 @@ const buildBoundsCenter = (
 const getQuizResultDuration = () => {
   if (typeof window === "undefined") return 500;
   return window.matchMedia("(max-width: 900px)").matches ? 700 : 500;
+};
+const getKingstonCampusZoom = () => {
+  if (typeof window === "undefined") return KINGSTON_CAMPUS_ZOOM;
+  return window.matchMedia("(max-width: 900px)").matches
+    ? KINGSTON_CAMPUS_MOBILE_ZOOM
+    : KINGSTON_CAMPUS_ZOOM;
 };
 
 
@@ -3184,6 +3191,7 @@ export default function MapView() {
   const lockKingstonCampusView = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
+    const targetZoom = getKingstonCampusZoom();
     if (!buildingViewRestoreRef.current) {
       const center = map.getCenter();
       buildingViewRestoreRef.current = {
@@ -3201,7 +3209,7 @@ export default function MapView() {
     const needsMove =
       Math.abs(currentCenter.lng - KINGSTON_CAMPUS_CENTER[0]) > 0.0001 ||
       Math.abs(currentCenter.lat - KINGSTON_CAMPUS_CENTER[1]) > 0.0001 ||
-      Math.abs(map.getZoom() - KINGSTON_CAMPUS_ZOOM) > 0.01;
+      Math.abs(map.getZoom() - targetZoom) > 0.01;
     if (!needsMove) {
       applyDefaultBounds();
       return;
@@ -3224,7 +3232,7 @@ export default function MapView() {
       const isAtTarget =
         Math.abs(center.lng - KINGSTON_CAMPUS_CENTER[0]) < 0.0002 &&
         Math.abs(center.lat - KINGSTON_CAMPUS_CENTER[1]) < 0.0002 &&
-        Math.abs(map.getZoom() - KINGSTON_CAMPUS_ZOOM) < 0.02;
+        Math.abs(map.getZoom() - targetZoom) < 0.02;
       const isTransitionEvent = eventData.campusTransitionId === transitionId;
       if (!isTransitionEvent && !isAtTarget) {
         return;
@@ -3233,7 +3241,7 @@ export default function MapView() {
         if (buildingQuizTransitionAttemptRef.current >= 1) {
           map.jumpTo({
             center: KINGSTON_CAMPUS_CENTER,
-            zoom: KINGSTON_CAMPUS_ZOOM,
+            zoom: targetZoom,
           });
           map.off("moveend", handleMoveEnd);
           buildingQuizMoveEndHandlerRef.current = null;
@@ -3243,7 +3251,7 @@ export default function MapView() {
         buildingQuizTransitionAttemptRef.current += 1;
         map.easeTo({
           center: KINGSTON_CAMPUS_CENTER,
-          zoom: KINGSTON_CAMPUS_ZOOM,
+          zoom: targetZoom,
           duration: 500,
           essential: true,
         }, { campusTransitionId: transitionId });
@@ -3257,7 +3265,7 @@ export default function MapView() {
     map.on("moveend", handleMoveEnd);
     map.easeTo({
       center: KINGSTON_CAMPUS_CENTER,
-      zoom: KINGSTON_CAMPUS_ZOOM,
+      zoom: targetZoom,
       duration: 900,
       essential: true,
     }, { campusTransitionId: transitionId });
@@ -3470,6 +3478,25 @@ export default function MapView() {
     map.addControl(new maplibregl.AttributionControl({ compact: true }));
     roadSourceContentSeenRef.current = false;
     setRoadsLoading(true);
+    let resizeRaf = 0;
+    const scheduleResize = () => {
+      if (resizeRaf) return;
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = 0;
+        map.resize();
+      });
+    };
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => scheduleResize());
+    if (resizeObserver) {
+      resizeObserver.observe(mapContainer.current);
+    }
+    const visualViewport = window.visualViewport ?? null;
+    visualViewport?.addEventListener("resize", scheduleResize);
+    visualViewport?.addEventListener("scroll", scheduleResize);
+    scheduleResize();
 
     const handleSourceData = (event: MapSourceDataEvent) => {
       if (event.sourceId !== ROAD_SOURCE_ID) return;
@@ -3522,6 +3549,12 @@ export default function MapView() {
     });
 
     return () => {
+      if (resizeRaf) {
+        window.cancelAnimationFrame(resizeRaf);
+      }
+      resizeObserver?.disconnect();
+      visualViewport?.removeEventListener("resize", scheduleResize);
+      visualViewport?.removeEventListener("scroll", scheduleResize);
       map.off("load", handleLoad);
       map.off("sourcedata", handleSourceData);
       map.remove();

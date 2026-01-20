@@ -5,19 +5,24 @@ import MapView from "./MapView";
 export default function App() {
   useEffect(() => {
     const setAppHeight = () => {
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
       document.documentElement.style.setProperty(
         "--app-height",
-        `${window.innerHeight}px`
+        `${viewportHeight}px`
       );
     };
 
     setAppHeight();
     window.addEventListener("resize", setAppHeight);
     window.addEventListener("orientationchange", setAppHeight);
+    window.visualViewport?.addEventListener("resize", setAppHeight);
+    window.visualViewport?.addEventListener("scroll", setAppHeight);
 
     return () => {
       window.removeEventListener("resize", setAppHeight);
       window.removeEventListener("orientationchange", setAppHeight);
+      window.visualViewport?.removeEventListener("resize", setAppHeight);
+      window.visualViewport?.removeEventListener("scroll", setAppHeight);
     };
   }, []);
 
