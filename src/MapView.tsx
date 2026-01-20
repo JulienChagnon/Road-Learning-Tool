@@ -10,6 +10,8 @@ import {
 import maplibregl, {
   type ExpressionSpecification,
   type FilterSpecification,
+  type GeoJSONSource,
+  type MapLibreEvent,
   type MapGeoJSONFeature,
   type MapMouseEvent,
   type MapSourceDataEvent,
@@ -24,6 +26,7 @@ type CityConfig = {
   tileBounds: [number, number, number, number];
   mapBounds: [number, number, number, number];
   tilePath: string;
+  buildingTilePath?: string;
   catalogPath: string;
   tagline: string;
   defaultTokens: string[];
@@ -72,6 +75,17 @@ const ROAD_LABEL_LAYER_ID = "roads-label";
 const ROAD_SOURCE_LAYER = "roads";
 const ROAD_TILE_MIN_ZOOM = 2;
 const ROAD_TILE_MAX_ZOOM = 14;
+
+const BUILDING_SOURCE_ID = "buildings-source";
+const BUILDING_FILL_LAYER_ID = "buildings-fill";
+const BUILDING_OUTLINE_LAYER_ID = "buildings-outline";
+const BUILDING_LABEL_SOURCE_ID = "buildings-label-source";
+const BUILDING_LABEL_LAYER_ID = "buildings-label";
+const BUILDING_SOURCE_LAYER = "buildings";
+const BUILDING_TILE_MIN_ZOOM = 12;
+const BUILDING_TILE_MAX_ZOOM = 16;
+const KINGSTON_FIELD_LABEL_SOURCE_ID = "kingston-field-labels-source";
+const KINGSTON_FIELD_LABEL_LAYER_ID = "kingston-field-labels";
 
 // --- Popular Roads Data ---
 const POPULAR_ROADS_OTTAWA = [
@@ -172,7 +186,6 @@ const POPULAR_ROADS_KINGSTON = [
   "Brock Street",
   "William Street",
   "Collingwood Street",
-  "Victoria Street",
   "Clergy Street",
   "Bader Lane"
 ];
@@ -342,6 +355,15 @@ const KINGSTON_TILE_BOUNDS: [number, number, number, number] = [
   44.25584,
 ];
 const KINGSTON_CENTER_OFFSET: [number, number] = [0.006, -0.011];
+const KINGSTON_CAMPUS_BOUNDS: [number, number, number, number] = [
+  -76.528087,
+  44.211901,
+  -76.451312,
+  44.24761,
+];
+const KINGSTON_CAMPUS_CENTER: [number, number] = [-76.495056, 44.22626];
+const KINGSTON_CAMPUS_ZOOM = 15.5;
+const KINGSTON_CAMPUS_MIN_ZOOM = 15;
 const buildMapBounds = (
   bounds: [number, number, number, number],
   padX = 0.8,
@@ -399,8 +421,9 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     tileBounds: KINGSTON_TILE_BOUNDS,
     mapBounds: buildMapBounds(KINGSTON_TILE_BOUNDS),
     tilePath: "assets/tiles/kingston/{z}/{x}/{y}.pbf",
+    buildingTilePath: "assets/tiles/kingston/buildings/{z}/{x}/{y}.pbf",
     catalogPath: "assets/roads/kingston.json",
-    tagline: "Memorize key streets around Queen's University.",
+    tagline: "Memorize key streets and buildings around Queen's University.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.kingston,
   },
 };
@@ -418,7 +441,12 @@ const resolveStaticUrl = (path: string) => {
 
 const getRoadTileUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].tilePath);
 const getRoadCatalogUrl = (city: CityKey) => resolveStaticUrl(CITY_CONFIG[city].catalogPath);
+const getBuildingTileUrl = (city: CityKey) => {
+  const path = CITY_CONFIG[city].buildingTilePath;
+  return path ? resolveStaticUrl(path) : null;
+};
 const QUIZ_PATH_SEGMENT = "quiz";
+const BUILDINGS_PATH_SEGMENT = "buildings";
 const ROUTE_HASH_PREFIX = "#/";
 const CITY_PATH_SEGMENTS: Record<CityKey, string> = {
   ottawa: "ottawa",
@@ -474,6 +502,11 @@ const getQuizFromPathname = (pathname: string) => {
   if (!segments.length) return false;
   return segments.includes(QUIZ_PATH_SEGMENT);
 };
+const getBuildingQuizFromPathname = (pathname: string) => {
+  const segments = getPathSegments(pathname);
+  if (!segments.length) return false;
+  return segments.includes(BUILDINGS_PATH_SEGMENT);
+};
 
 // --- Color Helpers ---
 const stringToColor = (value: string) => {
@@ -484,6 +517,75 @@ const stringToColor = (value: string) => {
   }
   const hue = Math.abs(hash) % 360;
   return `hsl(${hue}, 70%, 55%)`;
+};
+
+const stringToPastelColor = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 58%, 80%)`;
+};
+
+const buildBuildingLabelCanonicalExpression = (
+  labelExpression: ExpressionSpecification,
+  overrides: Array<[string, string]>
+): ExpressionSpecification => {
+  if (!overrides.length) return labelExpression;
+  const pairs = overrides.flatMap(([fromLabel, toLabel]) => [
+    fromLabel,
+    toLabel,
+  ]);
+  return [
+    "match",
+    labelExpression,
+    ...pairs,
+    labelExpression,
+  ] as ExpressionSpecification;
+};
+
+const buildBuildingColorExpression = (
+  labelExpression: ExpressionSpecification,
+  labels: string[],
+  fallbackColor: string,
+  colorOverrides: Record<string, string> = {}
+): ExpressionSpecification | string => {
+  if (!labels.length) return fallbackColor;
+  const colorPairs: Array<ExpressionSpecification | string> = [];
+  labels.forEach((label) => {
+    colorPairs.push(label, colorOverrides[label] ?? stringToPastelColor(label));
+  });
+  return [
+    "match",
+    labelExpression,
+    ...colorPairs,
+    fallbackColor,
+  ] as ExpressionSpecification;
+};
+
+const buildBuildingQuizColorExpression = (
+  labelExpression: ExpressionSpecification,
+  correctLabels: string[],
+  incorrectLabels: string[],
+  baseColor: ExpressionSpecification | string
+): ExpressionSpecification | string => {
+  if (!correctLabels.length && !incorrectLabels.length) return baseColor;
+  const cases: Array<ExpressionSpecification | string> = [];
+  if (incorrectLabels.length) {
+    cases.push(
+      ["match", labelExpression, incorrectLabels, true, false],
+      QUIZ_INCORRECT_ROAD_COLOR
+    );
+  }
+  if (correctLabels.length) {
+    cases.push(
+      ["match", labelExpression, correctLabels, true, false],
+      QUIZ_CORRECT_ROAD_COLOR
+    );
+  }
+  return ["case", ...cases, baseColor] as ExpressionSpecification;
 };
 
 
@@ -518,9 +620,32 @@ const buildContrastingTextColorExpression = (
 
 
 const DEFAULT_ROAD_COLOR = "#f28c5f";
-const QUIZ_BASE_ROAD_COLOR = "#ffffff85"; 
+const QUIZ_BASE_ROAD_COLOR = "#ffffff85";
 const QUIZ_CORRECT_ROAD_COLOR = "#4fb360ff";
 const QUIZ_INCORRECT_ROAD_COLOR = "#dd5656ff";
+const BUILDING_QUIZ_ROAD_COLOR = "#b6bbc2";
+const ROAD_LABEL_SIZE_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  ROAD_TILE_MIN_ZOOM,
+  9,
+  10,
+  12,
+  14,
+  16,
+];
+const BUILDING_QUIZ_ROAD_LABEL_SIZE_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  ROAD_TILE_MIN_ZOOM,
+  7,
+  10,
+  10,
+  14,
+  13,
+];
 
 
 const ROAD_COLOR_OVERRIDES: Record<string, string> = {
@@ -1780,6 +1905,30 @@ const getQuizEmptyMessage = (correctCount: number, guessCount: number) => {
   return "No selected roads visible. Pan or zoom for another prompt.";
 };
 
+const getBuildingQuizEmptyMessage = (
+  correctCount: number,
+  guessCount: number
+) => {
+  if (guessCount > 0) {
+    return `Final score: ${correctCount}/${guessCount}.`;
+  }
+  return "No campus buildings visible. Zoom in for another prompt.";
+};
+
+const NAME_SEPARATOR_REGEX = /\s*(?:\/|&|\+)\s*/i;
+
+const getFeatureNameCandidates = (value: string) => {
+  const normalized = normalizeRoadToken(value);
+  if (!normalized) return [];
+  const candidates = new Set([normalized]);
+  const splitNames = normalized
+    .split(NAME_SEPARATOR_REGEX)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  splitNames.forEach((entry) => candidates.add(entry));
+  return Array.from(candidates);
+};
+
 const featureMatchesToken = (
   feature: MapGeoJSONFeature,
   tokenParts: string[],
@@ -1794,10 +1943,10 @@ const featureMatchesToken = (
 
   for (const value of nameValues) {
     if (typeof value !== "string") continue;
-    const normalized = normalizeRoadToken(value);
-    if (!normalized) continue;
-    if (matchesNameTokenParts(tokenParts, getNameParts(normalized))) {
-      return true;
+    for (const normalized of getFeatureNameCandidates(value)) {
+      if (matchesNameTokenParts(tokenParts, getNameParts(normalized))) {
+        return true;
+      }
     }
   }
 
@@ -1823,6 +1972,464 @@ const featureMatchesToken = (
   }
 
   return false;
+};
+
+const canonicalizeBuildingLabel = (label: string) =>
+  KINGSTON_BUILDING_LABEL_CANONICAL_OVERRIDE_MAP.get(label) ?? label;
+const normalizeBuildingLabel = (label: string) =>
+  canonicalizeBuildingLabel(label.trim()).toLowerCase();
+const getBuildingDisplayLabel = (label: string) => {
+  const canonicalLabel = canonicalizeBuildingLabel(label.trim());
+  return (
+    KINGSTON_BUILDING_LABEL_DISPLAY_OVERRIDE_MAP.get(canonicalLabel) ??
+    canonicalLabel
+  );
+};
+
+const buildingFeatureMatchesLabel = (
+  feature: MapGeoJSONFeature,
+  label: string
+) => {
+  const properties = feature.properties ?? {};
+  const targetLabel = getBuildingDisplayLabel(label);
+  const labelValues = [
+    properties["name"],
+    properties["official_name"],
+    properties["alt_name"],
+    properties["operator"],
+  ];
+  return labelValues.some(
+    (value) =>
+      typeof value === "string" &&
+      getBuildingDisplayLabel(value) === targetLabel
+  );
+};
+
+const getBuildingLabelCandidate = (feature: MapGeoJSONFeature) => {
+  const properties = feature.properties ?? {};
+  const labelValues = [
+    properties["name"],
+    properties["official_name"],
+    properties["alt_name"],
+    properties["operator"],
+  ];
+  for (const value of labelValues) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    return {
+      canonicalLabel: canonicalizeBuildingLabel(trimmed),
+      displayLabel: getBuildingDisplayLabel(trimmed),
+    };
+  }
+  return null;
+};
+
+type LngLat = [number, number];
+
+const getRingAreaAndCentroid = (ring: LngLat[]) => {
+  if (ring.length < 3) return null;
+  let area = 0;
+  let x = 0;
+  let y = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [x0, y0] = ring[j];
+    const [x1, y1] = ring[i];
+    const cross = x0 * y1 - x1 * y0;
+    area += cross;
+    x += (x0 + x1) * cross;
+    y += (y0 + y1) * cross;
+  }
+  area /= 2;
+  if (area === 0) return null;
+  const centroid: LngLat = [x / (6 * area), y / (6 * area)];
+  return { area, centroid };
+};
+
+const getPolygonAreaAndCentroid = (rings: LngLat[][]) => {
+  let areaSum = 0;
+  let xSum = 0;
+  let ySum = 0;
+  for (const ring of rings) {
+    const result = getRingAreaAndCentroid(ring);
+    if (!result) continue;
+    areaSum += result.area;
+    xSum += result.centroid[0] * result.area;
+    ySum += result.centroid[1] * result.area;
+  }
+  if (areaSum === 0) return null;
+  const centroid: LngLat = [xSum / areaSum, ySum / areaSum];
+  return { area: Math.abs(areaSum), centroid };
+};
+
+const getGeometryAreaAndCentroid = (
+  geometry: GeoJSON.Geometry | null | undefined
+) => {
+  if (!geometry) return null;
+  if (geometry.type === "Polygon") {
+    return getPolygonAreaAndCentroid(geometry.coordinates as LngLat[][]);
+  }
+  if (geometry.type === "MultiPolygon") {
+    let areaSum = 0;
+    let xSum = 0;
+    let ySum = 0;
+    for (const polygon of geometry.coordinates as LngLat[][][]) {
+      const result = getPolygonAreaAndCentroid(polygon);
+      if (!result) continue;
+      areaSum += result.area;
+      xSum += result.centroid[0] * result.area;
+      ySum += result.centroid[1] * result.area;
+    }
+    if (areaSum === 0) return null;
+    const centroid: LngLat = [xSum / areaSum, ySum / areaSum];
+    return { area: areaSum, centroid };
+  }
+  return null;
+};
+
+const getQuizFeatureTokens = (
+  features: MapGeoJSONFeature[],
+  matchIndex: RoadMatchIndex | null
+) => {
+  const matchedTokens = new Set<string>();
+  if (!matchIndex) return matchedTokens;
+
+  for (const feature of features) {
+    const properties = feature.properties ?? {};
+    const nameValues = [
+      properties["name"],
+      properties["name:en"],
+      properties["name_en"],
+    ];
+    const nameCandidates = new Set<string>();
+    for (const value of nameValues) {
+      if (typeof value !== "string") continue;
+      getFeatureNameCandidates(value).forEach((candidate) =>
+        nameCandidates.add(candidate)
+      );
+    }
+
+    const refValue = properties["ref"];
+    const refParts =
+      typeof refValue === "string"
+        ? getTokenParts(normalizeRoadToken(refValue))
+        : [];
+
+    for (const [token, names] of matchIndex.nameMatchesByToken) {
+      if (matchedTokens.has(token)) continue;
+      for (const name of names) {
+        if (nameCandidates.has(name)) {
+          matchedTokens.add(token);
+          break;
+        }
+      }
+    }
+
+    if (refParts.length) {
+      for (const [token, refs] of matchIndex.refMatchesByToken) {
+        if (matchedTokens.has(token)) continue;
+        let hasRefMatch = false;
+        for (const ref of refs) {
+          if (matchesRefTokenParts(getTokenParts(ref), refParts)) {
+            hasRefMatch = true;
+            break;
+          }
+        }
+        if (!hasRefMatch) continue;
+        const exclusions = OTTAWA_REF_LABEL_EXCLUSIONS.get(token);
+        if (exclusions?.size) {
+          let hasExclusion = false;
+          for (const name of nameCandidates) {
+            if (exclusions.has(name)) {
+              hasExclusion = true;
+              break;
+            }
+          }
+          if (hasExclusion) continue;
+        }
+        matchedTokens.add(token);
+      }
+    }
+  }
+
+  return matchedTokens;
+};
+
+const BUILDING_LABEL_TEXT_EXPRESSION: ExpressionSpecification = [
+  "coalesce",
+  ["get", "name"],
+  ["get", "official_name"],
+  ["get", "alt_name"],
+  ["get", "operator"],
+];
+const KINGSTON_BUILDING_LABEL_CANONICAL_OVERRIDES: Array<[string, string]> = [
+  ["Bruce Wing", "Miller Hall"],
+  ["Jean Royce Hall - Phase 1", "Jean Royce Hall"],
+  ["Jean Royce Hall - Phase 2", "Jean Royce Hall"],
+];
+const KINGSTON_BUILDING_LABEL_CANONICAL_OVERRIDE_MAP = new Map(
+  KINGSTON_BUILDING_LABEL_CANONICAL_OVERRIDES
+);
+// Edit this list to rename building labels on the map and in the quiz.
+const KINGSTON_BUILDING_LABEL_DISPLAY_OVERRIDES: Array<[string, string]> = [
+  ["Beamish-Munro Hall", "Beamish-Munro Hall (ILC)"],
+  ["Duncan McArthur Hall", "Duncan McArthur Hall (Faculty of Education)"],
+  ["Queen's Athletics Recreation Centre", "Queen's Athletics Recreation Centre (ARC)"],
+];
+const KINGSTON_BUILDING_LABEL_DISPLAY_OVERRIDE_MAP = new Map(
+  KINGSTON_BUILDING_LABEL_DISPLAY_OVERRIDES
+);
+const BUILDING_LABEL_CANONICAL_EXPRESSION =
+  buildBuildingLabelCanonicalExpression(
+    BUILDING_LABEL_TEXT_EXPRESSION,
+    KINGSTON_BUILDING_LABEL_CANONICAL_OVERRIDES
+  );
+const BUILDING_LABEL_DISPLAY_EXPRESSION =
+  buildBuildingLabelCanonicalExpression(
+    BUILDING_LABEL_CANONICAL_EXPRESSION,
+    KINGSTON_BUILDING_LABEL_DISPLAY_OVERRIDES
+  );
+// Edit this list to control which campus buildings are shown (remove a name to hide it).
+const KINGSTON_BUILDING_VISIBLE_LABELS = [
+  "Adelaide Hall",
+  "Agnes Queen\u2019s Art Gallery",
+  "Ann Baillie Building",
+  "Ban Righ Hall",
+  "Beamish-Munro Hall",
+  "Biosciences Complex",
+  "Botterell Hall",
+  "Brant House",
+  "Carruthers Hall",
+  "Cataraqui Building",
+  "Chernoff Auditorium",
+  "Chernoff Hall",
+  "Chown Hall",
+  "Clark Hall",
+  "David C. Smith House",
+  "Douglas Library",
+  "Duncan McArthur Hall",
+  "Dunning Hall",
+  "Dupuis Hall",
+  "Ellis Hall",
+  "Endaayaan \u2013 Tkan\u00f3nsote",
+  "Etherington Hall",
+  "Fleming Hall",
+  "Goodes Hall",
+  "Goodwin Hall",
+  "Gordon Hall",
+  "Gordon-Brockington House",
+  "Grant Hall",
+  "Harkness Hall",
+  "Harrison-LeCaine Hall",
+  "Humphrey Hall",
+  "Isabel Bader Centre for Performing Arts",
+  "Jackson Hall",
+  "Jeffery Hall",
+  "John Deutsch University Centre",
+  "Kathleen Ryan Hall",
+  "Kingston Hall",
+  "LaSalle Building",
+  "Leggett Hall",
+  "Leonard Hall",
+  "Louise D. Acton Building",
+  "Mackintosh-Corry Hall",
+  "McLaughlin Hall",
+  "McNeill House",
+  "Miller Hall",
+  "Mitchell Hall",
+  "Morris Hall",
+  "Nicol Hall",
+  "Old Medical Building",
+  "Ontario Hall",
+  "Queen's Athletics Recreation Centre",
+  "Queen's School of Medicine",
+  "Richardson Hall",
+  "Richardson Laboratory",
+  "Rideau Building",
+  "Robert Sutherland Hall",
+  "Stirling Hall",
+  "Summerhill",
+  "The Law Building",
+  "Stauffer Library",
+  "Kinesiology Building",
+  "Macdonald Hall",
+  "Victoria Hall",
+  "Walter Light Hall",
+  "Watson Hall",
+  "Jean Royce Hall",
+  "Watts Hall",
+  "Theological Hall",
+];
+const KINGSTON_BUILDING_DISPLAY_LABELS = KINGSTON_BUILDING_VISIBLE_LABELS.map(
+  (label) => getBuildingDisplayLabel(label)
+);
+const KINGSTON_BUILDING_VISIBLE_LABELS_LOWER = KINGSTON_BUILDING_VISIBLE_LABELS.map(
+  (label) => normalizeBuildingLabel(label)
+);
+const KINGSTON_BUILDING_VISIBLE_LABELS_LOWER_SET = new Set(
+  KINGSTON_BUILDING_VISIBLE_LABELS_LOWER
+);
+const DEFAULT_BUILDING_LABEL_OFFSET: [number, number] = [0, 0];
+const EMPTY_BUILDING_LABEL_GEOJSON: GeoJSON.FeatureCollection<GeoJSON.Point> = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+// Keep one label per canonical building name by picking the largest visible polygon.
+const buildBuildingLabelFeatureCollection = (
+  features: MapGeoJSONFeature[],
+  allowedLabels: Set<string> | null = null
+): GeoJSON.FeatureCollection<GeoJSON.Point> => {
+  if (allowedLabels && allowedLabels.size === 0) {
+    return { type: "FeatureCollection", features: [] };
+  }
+  const labels = new Map<
+    string,
+    { area: number; label: string; canonicalLabel: string; point: LngLat }
+  >();
+  for (const feature of features) {
+    const labelInfo = getBuildingLabelCandidate(feature);
+    if (!labelInfo) continue;
+    if (allowedLabels && !allowedLabels.has(labelInfo.displayLabel)) continue;
+    const normalizedLabel = normalizeBuildingLabel(labelInfo.canonicalLabel);
+    if (!KINGSTON_BUILDING_VISIBLE_LABELS_LOWER_SET.has(normalizedLabel)) continue;
+    const geometryInfo = getGeometryAreaAndCentroid(
+      feature.geometry as GeoJSON.Geometry
+    );
+    if (!geometryInfo) continue;
+    const existing = labels.get(normalizedLabel);
+    if (!existing || geometryInfo.area > existing.area) {
+      labels.set(normalizedLabel, {
+        area: geometryInfo.area,
+        label: labelInfo.displayLabel,
+        canonicalLabel: labelInfo.canonicalLabel,
+        point: geometryInfo.centroid,
+      });
+    }
+  }
+  const labelFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  for (const entry of labels.values()) {
+    const labelOffset =
+      DEFAULT_BUILDING_LABEL_OFFSET;
+    labelFeatures.push({
+      type: "Feature",
+      properties: {
+        label: entry.label,
+        canonical_label: entry.canonicalLabel,
+        label_offset: labelOffset,
+      },
+      geometry: { type: "Point", coordinates: entry.point },
+    });
+  }
+  return { type: "FeatureCollection", features: labelFeatures };
+};
+const KINGSTON_BUILDING_FALLBACK_COLOR = "#d8e4ef";
+const KINGSTON_BUILDING_QUIZ_BASE_COLOR = "#b8c0c7";
+const KINGSTON_BUILDING_ROAD_QUIZ_COLOR = "#f2f2f2";
+const KINGSTON_BUILDING_QUIZ_OUTLINE_COLOR = "#ffffff";
+// Edit this list to override building fill/halo colors by name.
+const KINGSTON_BUILDING_COLOR_OVERRIDES: Record<string, string> = {
+  "Leonard Hall": "#a2f0e9",
+  "Walter Light Hall": "#c18772",
+  "Stauffer Library": "#827cc4",
+};
+const KINGSTON_BUILDING_FILL_OPACITY_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  BUILDING_TILE_MIN_ZOOM,
+  0.35,
+  15,
+  0.55,
+  17,
+  0.7,
+];
+const KINGSTON_BUILDING_ROAD_QUIZ_OPACITY_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  BUILDING_TILE_MIN_ZOOM,
+  0.15,
+  15,
+  0.24,
+  17,
+  0.32,
+];
+const KINGSTON_BUILDING_QUIZ_OPACITY_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  BUILDING_TILE_MIN_ZOOM,
+  0.32,
+  15,
+  0.5,
+  17,
+  0.65,
+];
+const KINGSTON_BUILDING_OUTLINE_OPACITY = 0.9;
+const KINGSTON_BUILDING_COLOR_EXPRESSION = buildBuildingColorExpression(
+  BUILDING_LABEL_CANONICAL_EXPRESSION,
+  KINGSTON_BUILDING_VISIBLE_LABELS,
+  KINGSTON_BUILDING_FALLBACK_COLOR,
+  KINGSTON_BUILDING_COLOR_OVERRIDES
+);
+const KINGSTON_BUILDING_VISIBLE_FILTER: FilterSpecification = [
+  "match",
+  ["downcase", BUILDING_LABEL_CANONICAL_EXPRESSION],
+  KINGSTON_BUILDING_VISIBLE_LABELS_LOWER,
+  true,
+  false,
+];
+const BUILDING_RENDER_FILTER: FilterSpecification = [
+  "all",
+  ["!=", ["get", "building"], "parking"],
+  ["!=", ["get", "building"], "garage"],
+  KINGSTON_BUILDING_VISIBLE_FILTER,
+];
+const KINGSTON_BUILDING_LABEL_OFFSET_EXPRESSION: ExpressionSpecification = [
+  "coalesce",
+  ["get", "label_offset"],
+  ["literal", [0, 0]],
+];
+const KINGSTON_BUILDING_LABEL_COLOR = "#000000";
+const KINGSTON_BUILDING_LABEL_HALO_COLOR = buildBuildingColorExpression(
+  ["get", "canonical_label"],
+  KINGSTON_BUILDING_VISIBLE_LABELS,
+  KINGSTON_BUILDING_FALLBACK_COLOR,
+  KINGSTON_BUILDING_COLOR_OVERRIDES
+);
+const KINGSTON_FIELD_LABEL_TEXT_COLOR = "#000000";
+const KINGSTON_FIELD_LABEL_HALO_COLOR = "#ffffff";
+const KINGSTON_FIELD_LABEL_TEXT_SIZE_EXPRESSION: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  14,
+  11,
+  16,
+  14,
+  18,
+  16,
+];
+const KINGSTON_FIELD_LABEL_GEOJSON: GeoJSON.FeatureCollection<GeoJSON.Point> = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { name: "Richardson Stadium" },
+      geometry: { type: "Point", coordinates: [-76.516296, 44.227681] },
+    },
+    {
+      type: "Feature",
+      properties: { name: "Nixon Field" },
+      geometry: { type: "Point", coordinates: [-76.49464, 44.225158] },
+    },
+    {
+      type: "Feature",
+      properties: { name: "Tindall Field" },
+      geometry: { type: "Point", coordinates: [-76.498144, 44.226704] },
+    },
+  ],
 };
 
 const ensureRoadLayer = (
@@ -1904,14 +2511,7 @@ const ensureRoadLayer = (
         "text-ignore-placement": true,
         "symbol-avoid-edges": false,
 
-        "text-size": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          ROAD_TILE_MIN_ZOOM, 9,
-          10, 12,
-          14, 16
-        ],
+        "text-size": ROAD_LABEL_SIZE_EXPRESSION,
         
         "text-max-width": 8,
         "text-keep-upright": true,
@@ -1925,6 +2525,157 @@ const ensureRoadLayer = (
         "text-halo-blur": 0.5,
       },
     });
+  }
+};
+
+const ensureBuildingLayer = (map: maplibregl.Map, city: CityKey) => {
+  const tileUrl = getBuildingTileUrl(city);
+  if (!tileUrl) return;
+  const fillColor = KINGSTON_BUILDING_COLOR_EXPRESSION;
+  const labelTextColor = KINGSTON_BUILDING_LABEL_COLOR;
+  const labelHaloColor = KINGSTON_BUILDING_LABEL_HALO_COLOR;
+
+  if (!map.getSource(BUILDING_SOURCE_ID)) {
+    map.addSource(BUILDING_SOURCE_ID, {
+      type: "vector",
+      tiles: [tileUrl],
+      minzoom: BUILDING_TILE_MIN_ZOOM,
+      maxzoom: BUILDING_TILE_MAX_ZOOM,
+      bounds: CITY_CONFIG[city].tileBounds,
+    });
+  }
+
+  const beforeRoadBase = map.getLayer(ROAD_BASE_LAYER_ID)
+    ? ROAD_BASE_LAYER_ID
+    : undefined;
+  const beforeRoadLabel = map.getLayer(ROAD_LABEL_LAYER_ID)
+    ? ROAD_LABEL_LAYER_ID
+    : undefined;
+
+  if (!map.getLayer(BUILDING_FILL_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: BUILDING_FILL_LAYER_ID,
+        type: "fill",
+        source: BUILDING_SOURCE_ID,
+        "source-layer": BUILDING_SOURCE_LAYER,
+        filter: BUILDING_RENDER_FILTER,
+        paint: {
+          "fill-color": fillColor,
+          "fill-opacity": KINGSTON_BUILDING_FILL_OPACITY_EXPRESSION,
+        },
+      },
+      beforeRoadBase
+    );
+  }
+
+  if (!map.getLayer(BUILDING_OUTLINE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: BUILDING_OUTLINE_LAYER_ID,
+        type: "line",
+        source: BUILDING_SOURCE_ID,
+        "source-layer": BUILDING_SOURCE_LAYER,
+        filter: BUILDING_RENDER_FILTER,
+        paint: {
+          "line-color": fillColor,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            BUILDING_TILE_MIN_ZOOM,
+            0.4,
+            15,
+            1,
+            17,
+            1.6,
+          ],
+          "line-opacity": KINGSTON_BUILDING_OUTLINE_OPACITY,
+        },
+      },
+      beforeRoadBase
+    );
+  }
+
+  if (!map.getSource(BUILDING_LABEL_SOURCE_ID)) {
+    map.addSource(BUILDING_LABEL_SOURCE_ID, {
+      type: "geojson",
+      data: EMPTY_BUILDING_LABEL_GEOJSON,
+    });
+  }
+
+  if (!map.getLayer(BUILDING_LABEL_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: BUILDING_LABEL_LAYER_ID,
+        type: "symbol",
+        source: BUILDING_LABEL_SOURCE_ID,
+        minzoom: 14,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-font": ["Noto Sans Regular", "Open Sans Regular"],
+          "text-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            14,
+            10,
+            16,
+            13,
+            18,
+            16,
+          ],
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-max-width": 8,
+          "text-anchor": "center",
+          "text-offset": KINGSTON_BUILDING_LABEL_OFFSET_EXPRESSION,
+        },
+        paint: {
+          "text-color": labelTextColor,
+          "text-halo-color": labelHaloColor,
+          "text-halo-width": 1.5,
+          "text-halo-blur": 0.4,
+        },
+      },
+      beforeRoadLabel
+    );
+  }
+
+  if (city === "kingston") {
+    if (!map.getSource(KINGSTON_FIELD_LABEL_SOURCE_ID)) {
+      map.addSource(KINGSTON_FIELD_LABEL_SOURCE_ID, {
+        type: "geojson",
+        data: KINGSTON_FIELD_LABEL_GEOJSON,
+      });
+    }
+
+    if (!map.getLayer(KINGSTON_FIELD_LABEL_LAYER_ID)) {
+      map.addLayer(
+        {
+          id: KINGSTON_FIELD_LABEL_LAYER_ID,
+          type: "symbol",
+          source: KINGSTON_FIELD_LABEL_SOURCE_ID,
+          minzoom: 14,
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["Noto Sans Regular", "Open Sans Regular"],
+            "text-size": KINGSTON_FIELD_LABEL_TEXT_SIZE_EXPRESSION,
+            "text-allow-overlap": true,
+            "text-ignore-placement": true,
+            "text-max-width": 10,
+            "text-anchor": "center",
+          },
+          paint: {
+            "text-color": KINGSTON_FIELD_LABEL_TEXT_COLOR,
+            "text-halo-color": KINGSTON_FIELD_LABEL_HALO_COLOR,
+            "text-halo-width": 2,
+            "text-halo-blur": 0.2,
+          },
+        },
+        beforeRoadLabel
+      );
+    }
   }
 };
 
@@ -1958,16 +2709,49 @@ const resetRoadSource = (
   );
 };
 
+const resetBuildingSource = (map: maplibregl.Map, city: CityKey) => {
+  if (map.getLayer(KINGSTON_FIELD_LABEL_LAYER_ID)) {
+    map.removeLayer(KINGSTON_FIELD_LABEL_LAYER_ID);
+  }
+  if (map.getLayer(BUILDING_LABEL_LAYER_ID)) {
+    map.removeLayer(BUILDING_LABEL_LAYER_ID);
+  }
+  if (map.getLayer(BUILDING_OUTLINE_LAYER_ID)) {
+    map.removeLayer(BUILDING_OUTLINE_LAYER_ID);
+  }
+  if (map.getLayer(BUILDING_FILL_LAYER_ID)) {
+    map.removeLayer(BUILDING_FILL_LAYER_ID);
+  }
+  if (map.getSource(BUILDING_SOURCE_ID)) {
+    map.removeSource(BUILDING_SOURCE_ID);
+  }
+  if (map.getSource(BUILDING_LABEL_SOURCE_ID)) {
+    map.removeSource(BUILDING_LABEL_SOURCE_ID);
+  }
+  if (map.getSource(KINGSTON_FIELD_LABEL_SOURCE_ID)) {
+    map.removeSource(KINGSTON_FIELD_LABEL_SOURCE_ID);
+  }
+  ensureBuildingLayer(map, city);
+};
+
 export default function MapView() {
+  const initialRoutePathname =
+    typeof window === "undefined" ? "/" : getRoutePathname();
   const initialCity =
     typeof window === "undefined"
       ? DEFAULT_CITY
-      : getCityFromPathname(getRoutePathname());
+      : getCityFromPathname(initialRoutePathname);
   const initialTokens = CITY_CONFIG[initialCity].defaultTokens;
+  const initialIsBuildingQuizActive =
+    typeof window === "undefined"
+      ? false
+      : Boolean(CITY_CONFIG[initialCity].buildingTilePath) &&
+        getBuildingQuizFromPathname(initialRoutePathname);
   const initialIsQuizActive =
     typeof window === "undefined"
       ? false
-      : getQuizFromPathname(getRoutePathname());
+      : !initialIsBuildingQuizActive &&
+        getQuizFromPathname(initialRoutePathname);
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapCityRef = useRef<CityKey>(initialCity);
@@ -1988,6 +2772,9 @@ export default function MapView() {
   const [includeGatineauRoads, setIncludeGatineauRoads] = useState(true);
   const [city, setCity] = useState<CityKey>(initialCity);
   const [isQuizActive, setIsQuizActive] = useState(initialIsQuizActive);
+  const [isBuildingQuizActive, setIsBuildingQuizActive] = useState(
+    initialIsBuildingQuizActive
+  );
   const [quizTargetToken, setQuizTargetToken] = useState<string | null>(null);
   const [quizFoundTokens, setQuizFoundTokens] = useState<string[]>([]);
   const [quizCorrectTokens, setQuizCorrectTokens] = useState<string[]>([]);
@@ -1998,6 +2785,26 @@ export default function MapView() {
   const [quizGuessCount, setQuizGuessCount] = useState(0);
   const [quizResultState, setQuizResultState] =
     useState<QuizResultState>("idle");
+  const [buildingQuizTargetLabel, setBuildingQuizTargetLabel] = useState<
+    string | null
+  >(null);
+  const [buildingQuizFoundLabels, setBuildingQuizFoundLabels] = useState<
+    string[]
+  >([]);
+  const [buildingQuizCorrectLabels, setBuildingQuizCorrectLabels] = useState<
+    string[]
+  >([]);
+  const [buildingQuizIncorrectLabels, setBuildingQuizIncorrectLabels] = useState<
+    string[]
+  >([]);
+  const [buildingQuizMessage, setBuildingQuizMessage] = useState<string | null>(
+    null
+  );
+  const [buildingQuizQueue, setBuildingQuizQueue] = useState<string[]>([]);
+  const [buildingQuizCorrectCount, setBuildingQuizCorrectCount] = useState(0);
+  const [buildingQuizGuessCount, setBuildingQuizGuessCount] = useState(0);
+  const [buildingQuizResultState, setBuildingQuizResultState] =
+    useState<QuizResultState>("idle");
   const quizAttemptedTokenRef = useRef<string | null>(null);
   const quizFoundTokensRef = useRef<string[]>([]);
   const quizQueueRef = useRef<string[]>([]);
@@ -2005,8 +2812,28 @@ export default function MapView() {
   const quizResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const buildingQuizAttemptLabelRef = useRef<string | null>(null);
+  const buildingQuizFoundLabelsRef = useRef<string[]>([]);
+  const buildingQuizQueueRef = useRef<string[]>([]);
+  const buildingQuizLabelsRef = useRef<string[]>([]);
+  const buildingQuizResultTimeoutRef = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
+  const buildingQuizTransitionIdRef = useRef(0);
+  const buildingQuizTransitionAttemptRef = useRef(0);
+  const buildingQuizMoveEndHandlerRef = useRef<((event: MapLibreEvent) => void) | null>(
+    null
+  );
+  const buildingLabelUpdateFrameRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
   const hasInitializedQuizRef = useRef(false);
+  const hasInitializedBuildingQuizRef = useRef(false);
+  const buildingViewRestoreRef = useRef<{
+    center: [number, number];
+    zoom: number;
+    maxBounds: maplibregl.LngLatBounds | null;
+    minZoom: number;
+  } | null>(null);
   const tokenLabelOverrides =
     city === "montreal"
       ? MONTREAL_REF_LABEL_OVERRIDES
@@ -2031,6 +2858,10 @@ export default function MapView() {
       (token) => !GATINEAU_ROAD_TOKEN_SET.has(token)
     );
   }, [city, includeGatineauRoads, quizRoadTokens]);
+  const buildingQuizLabels = useMemo(
+    () => (city === "kingston" ? KINGSTON_BUILDING_DISPLAY_LABELS : []),
+    [city]
+  );
 
   const roadIndex = useMemo(
     () => (roadCatalog ? buildRoadIndex(roadCatalog) : null),
@@ -2136,9 +2967,12 @@ export default function MapView() {
     if (typeof window === "undefined") return;
     const basePath = getBasePathname();
     const segment = CITY_PATH_SEGMENTS[city];
-    const targetPath = `/${[segment, isQuizActive ? QUIZ_PATH_SEGMENT : ""]
-      .filter(Boolean)
-      .join("/")}`;
+    const quizSegment = isBuildingQuizActive
+      ? BUILDINGS_PATH_SEGMENT
+      : isQuizActive
+        ? QUIZ_PATH_SEGMENT
+        : "";
+    const targetPath = `/${[segment, quizSegment].filter(Boolean).join("/")}`;
     const currentPath = getRoutePathname();
     const url = new URL(window.location.href);
     if (
@@ -2150,7 +2984,7 @@ export default function MapView() {
     url.pathname = basePath;
     url.hash = `${ROUTE_HASH_PREFIX}${targetPath.replace(/^\/+/, "")}`;
     window.history.replaceState(window.history.state, "", url.toString());
-  }, [city, isQuizActive]);
+  }, [city, isBuildingQuizActive, isQuizActive]);
 
   useEffect(() => {
     const nextTokens = CITY_CONFIG[city].defaultTokens;
@@ -2162,6 +2996,9 @@ export default function MapView() {
     const nextQuizActive = isInitialLoadRef.current
       ? initialIsQuizActive
       : false;
+    const nextBuildingQuizActive = isInitialLoadRef.current
+      ? initialIsBuildingQuizActive
+      : false;
     setIsQuizActive(nextQuizActive);
     setQuizTargetToken(null);
     setQuizFoundTokens([]);
@@ -2172,6 +3009,16 @@ export default function MapView() {
     setQuizCorrectCount(0);
     setQuizGuessCount(0);
     setQuizResultState("idle");
+    setIsBuildingQuizActive(nextBuildingQuizActive);
+    setBuildingQuizTargetLabel(null);
+    setBuildingQuizFoundLabels([]);
+    setBuildingQuizCorrectLabels([]);
+    setBuildingQuizIncorrectLabels([]);
+    setBuildingQuizMessage(null);
+    setBuildingQuizQueue([]);
+    setBuildingQuizCorrectCount(0);
+    setBuildingQuizGuessCount(0);
+    setBuildingQuizResultState("idle");
 
     quizRoadTokensRef.current = nextTokens;
     quizFoundTokensRef.current = [];
@@ -2181,6 +3028,16 @@ export default function MapView() {
       clearTimeout(quizResultTimeoutRef.current);
       quizResultTimeoutRef.current = null;
     }
+    buildingQuizFoundLabelsRef.current = [];
+    buildingQuizQueueRef.current = [];
+    buildingQuizAttemptLabelRef.current = null;
+    buildingQuizLabelsRef.current = [];
+    if (buildingQuizResultTimeoutRef.current) {
+      clearTimeout(buildingQuizResultTimeoutRef.current);
+      buildingQuizResultTimeoutRef.current = null;
+    }
+    hasInitializedBuildingQuizRef.current = false;
+    buildingViewRestoreRef.current = null;
     if (isInitialLoadRef.current) {
       isInitialLoadRef.current = false;
     }
@@ -2226,9 +3083,9 @@ export default function MapView() {
       clearQuizResultTimeout();
       setQuizResultState(isCorrect ? "correct" : "incorrect");
       quizResultTimeoutRef.current = setTimeout(() => {
-      setQuizResultState("idle");
-      quizResultTimeoutRef.current = null;
-    }, getQuizResultDuration());
+        setQuizResultState("idle");
+        quizResultTimeoutRef.current = null;
+      }, getQuizResultDuration());
     },
     [clearQuizResultTimeout]
   );
@@ -2312,13 +3169,266 @@ export default function MapView() {
     mapLoaded,
   ]);
 
+  const clearBuildingQuizResultTimeout = useCallback(() => {
+    if (buildingQuizResultTimeoutRef.current) {
+      clearTimeout(buildingQuizResultTimeoutRef.current);
+      buildingQuizResultTimeoutRef.current = null;
+    }
+  }, []);
+
+  const showBuildingQuizResult = useCallback(
+    (isCorrect: boolean) => {
+      clearBuildingQuizResultTimeout();
+      setBuildingQuizResultState(isCorrect ? "correct" : "incorrect");
+      buildingQuizResultTimeoutRef.current = setTimeout(() => {
+        setBuildingQuizResultState("idle");
+        buildingQuizResultTimeoutRef.current = null;
+      }, getQuizResultDuration());
+    },
+    [clearBuildingQuizResultTimeout]
+  );
+
+  const lockKingstonCampusView = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!buildingViewRestoreRef.current) {
+      const center = map.getCenter();
+      buildingViewRestoreRef.current = {
+        center: [center.lng, center.lat],
+        zoom: map.getZoom(),
+        maxBounds: map.getMaxBounds(),
+        minZoom: map.getMinZoom(),
+      };
+    }
+    const applyCampusBounds = () => {
+      map.setMaxBounds(KINGSTON_CAMPUS_BOUNDS);
+      map.setMinZoom(KINGSTON_CAMPUS_MIN_ZOOM);
+    };
+    const currentCenter = map.getCenter();
+    const needsMove =
+      Math.abs(currentCenter.lng - KINGSTON_CAMPUS_CENTER[0]) > 0.0001 ||
+      Math.abs(currentCenter.lat - KINGSTON_CAMPUS_CENTER[1]) > 0.0001 ||
+      Math.abs(map.getZoom() - KINGSTON_CAMPUS_ZOOM) > 0.01;
+    if (!needsMove) {
+      applyCampusBounds();
+      return;
+    }
+    map.stop();
+    map.setMaxBounds(null);
+    map.setMinZoom(ROAD_TILE_MIN_ZOOM);
+    const transitionId = buildingQuizTransitionIdRef.current + 1;
+    buildingQuizTransitionIdRef.current = transitionId;
+    buildingQuizTransitionAttemptRef.current = 0;
+    if (buildingQuizMoveEndHandlerRef.current) {
+      map.off("moveend", buildingQuizMoveEndHandlerRef.current);
+      buildingQuizMoveEndHandlerRef.current = null;
+    }
+    const handleMoveEnd = (event: MapLibreEvent) => {
+      const eventData = event as MapLibreEvent & {
+        campusTransitionId?: number;
+      };
+      const center = map.getCenter();
+      const isAtTarget =
+        Math.abs(center.lng - KINGSTON_CAMPUS_CENTER[0]) < 0.0002 &&
+        Math.abs(center.lat - KINGSTON_CAMPUS_CENTER[1]) < 0.0002 &&
+        Math.abs(map.getZoom() - KINGSTON_CAMPUS_ZOOM) < 0.02;
+      const isTransitionEvent = eventData.campusTransitionId === transitionId;
+      if (!isTransitionEvent && !isAtTarget) {
+        return;
+      }
+      if (!isAtTarget) {
+        if (buildingQuizTransitionAttemptRef.current >= 1) {
+          map.jumpTo({
+            center: KINGSTON_CAMPUS_CENTER,
+            zoom: KINGSTON_CAMPUS_ZOOM,
+          });
+          map.off("moveend", handleMoveEnd);
+          buildingQuizMoveEndHandlerRef.current = null;
+          applyCampusBounds();
+          return;
+        }
+        buildingQuizTransitionAttemptRef.current += 1;
+        map.easeTo({
+          center: KINGSTON_CAMPUS_CENTER,
+          zoom: KINGSTON_CAMPUS_ZOOM,
+          duration: 500,
+          essential: true,
+        }, { campusTransitionId: transitionId });
+        return;
+      }
+      map.off("moveend", handleMoveEnd);
+      buildingQuizMoveEndHandlerRef.current = null;
+      applyCampusBounds();
+    };
+    buildingQuizMoveEndHandlerRef.current = handleMoveEnd;
+    map.on("moveend", handleMoveEnd);
+    map.easeTo({
+      center: KINGSTON_CAMPUS_CENTER,
+      zoom: KINGSTON_CAMPUS_ZOOM,
+      duration: 900,
+      essential: true,
+    }, { campusTransitionId: transitionId });
+  }, []);
+
+  const restoreMapViewFromBuildingQuiz = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const restore = buildingViewRestoreRef.current;
+    const fallback = CITY_CONFIG[city];
+    const center = restore?.center ?? fallback.center;
+    const zoom = restore?.zoom ?? fallback.zoom;
+    const maxBounds = restore?.maxBounds ?? fallback.mapBounds;
+    const minZoom = restore?.minZoom ?? ROAD_TILE_MIN_ZOOM;
+    map.setMaxBounds(maxBounds);
+    map.setMinZoom(minZoom);
+    map.flyTo({ center, zoom });
+    buildingViewRestoreRef.current = null;
+  }, [city]);
+
+  const updateBuildingLabelSource = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || city !== "kingston") return;
+    if (!map.getLayer(BUILDING_FILL_LAYER_ID)) return;
+    const labelSource = map.getSource(BUILDING_LABEL_SOURCE_ID);
+    if (!labelSource) return;
+    const features = map.queryRenderedFeatures({
+      layers: [BUILDING_FILL_LAYER_ID],
+    });
+    const allowedLabels = isBuildingQuizActive
+      ? new Set(buildingQuizFoundLabels)
+      : null;
+    const data = buildBuildingLabelFeatureCollection(features, allowedLabels);
+    (labelSource as GeoJSONSource).setData(data);
+  }, [buildingQuizFoundLabels, city, isBuildingQuizActive, mapLoaded]);
+
+  const scheduleBuildingLabelUpdate = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (buildingLabelUpdateFrameRef.current !== null) return;
+    buildingLabelUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      buildingLabelUpdateFrameRef.current = null;
+      updateBuildingLabelSource();
+    });
+  }, [updateBuildingLabelSource]);
+
+  const handleSkipBuilding = useCallback(() => {
+    if (!buildingQuizTargetLabel) return;
+    clearBuildingQuizResultTimeout();
+    setBuildingQuizResultState("idle");
+    const nextQueue = [
+      ...buildingQuizQueueRef.current,
+      buildingQuizTargetLabel,
+    ];
+    const [nextTarget, ...rest] = nextQueue;
+    buildingQuizQueueRef.current = rest;
+    setBuildingQuizQueue(rest);
+    setBuildingQuizTargetLabel(nextTarget ?? null);
+    setBuildingQuizMessage(
+      nextTarget
+        ? null
+        : getBuildingQuizEmptyMessage(
+            buildingQuizCorrectCount,
+            buildingQuizGuessCount
+          )
+    );
+  }, [
+    buildingQuizCorrectCount,
+    buildingQuizGuessCount,
+    buildingQuizTargetLabel,
+    clearBuildingQuizResultTimeout,
+  ]);
+
+  const stopBuildingQuiz = useCallback(() => {
+    clearBuildingQuizResultTimeout();
+    setBuildingQuizResultState("idle");
+    setIsBuildingQuizActive(false);
+    setBuildingQuizTargetLabel(null);
+    setBuildingQuizFoundLabels([]);
+    setBuildingQuizCorrectLabels([]);
+    setBuildingQuizIncorrectLabels([]);
+    setBuildingQuizMessage(null);
+    setBuildingQuizQueue([]);
+    setBuildingQuizCorrectCount(0);
+    setBuildingQuizGuessCount(0);
+    buildingQuizFoundLabelsRef.current = [];
+    buildingQuizQueueRef.current = [];
+    buildingQuizAttemptLabelRef.current = null;
+    hasInitializedBuildingQuizRef.current = false;
+    const map = mapRef.current;
+    if (map && buildingQuizMoveEndHandlerRef.current) {
+      map.off("moveend", buildingQuizMoveEndHandlerRef.current);
+      buildingQuizMoveEndHandlerRef.current = null;
+    }
+    restoreMapViewFromBuildingQuiz();
+  }, [clearBuildingQuizResultTimeout, restoreMapViewFromBuildingQuiz]);
+
+  const startBuildingQuiz = useCallback(() => {
+    if (city !== "kingston") return;
+    clearBuildingQuizResultTimeout();
+    setBuildingQuizResultState("idle");
+    const nextBuildingLabels = [...buildingQuizLabels];
+    buildingQuizLabelsRef.current = nextBuildingLabels;
+    setIsBuildingQuizActive(true);
+    setBuildingQuizFoundLabels([]);
+    setBuildingQuizCorrectLabels([]);
+    setBuildingQuizIncorrectLabels([]);
+    const nextQueue = buildQuizQueue([], nextBuildingLabels);
+    setBuildingQuizTargetLabel(nextQueue[0] ?? null);
+    setBuildingQuizQueue(nextQueue.slice(1));
+    buildingQuizFoundLabelsRef.current = [];
+    buildingQuizQueueRef.current = nextQueue.slice(1);
+    setBuildingQuizMessage(
+      nextQueue.length
+        ? null
+        : mapLoaded
+          ? getBuildingQuizEmptyMessage(0, 0)
+          : "Map is still loading. Try again in a moment."
+    );
+    setBuildingQuizCorrectCount(0);
+    setBuildingQuizGuessCount(0);
+    hasInitializedBuildingQuizRef.current = true;
+    lockKingstonCampusView();
+  }, [
+    buildQuizQueue,
+    buildingQuizLabels,
+    city,
+    clearBuildingQuizResultTimeout,
+    lockKingstonCampusView,
+    mapLoaded,
+  ]);
+
   const handleQuizToggle = useCallback(() => {
     if (isQuizActive) {
       stopQuiz();
       return;
     }
+    if (isBuildingQuizActive) {
+      stopBuildingQuiz();
+    }
     startQuiz();
-  }, [isQuizActive, startQuiz, stopQuiz]);
+  }, [isBuildingQuizActive, isQuizActive, startQuiz, stopBuildingQuiz, stopQuiz]);
+
+  const handleBuildingQuizToggle = useCallback(() => {
+    if (isBuildingQuizActive) {
+      stopBuildingQuiz();
+      return;
+    }
+    if (isQuizActive) {
+      stopQuiz();
+    }
+    startBuildingQuiz();
+  }, [
+    isBuildingQuizActive,
+    isQuizActive,
+    startBuildingQuiz,
+    stopBuildingQuiz,
+    stopQuiz,
+  ]);
+
+  useEffect(() => {
+    if (isQuizActive && isBuildingQuizActive) {
+      stopBuildingQuiz();
+    }
+  }, [isBuildingQuizActive, isQuizActive, stopBuildingQuiz]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2408,6 +3518,7 @@ export default function MapView() {
         buildContrastingTextColorExpression(defaultLineColor),
         defaultLabelText
       );
+      ensureBuildingLayer(map, initialCity);
       mapCityRef.current = initialCity;
     };
 
@@ -2458,6 +3569,7 @@ export default function MapView() {
       buildContrastingTextColorExpression(nextLineColor),
       nextLabelText
     );
+    resetBuildingSource(map, city);
     mapCityRef.current = city;
   }, [city, mapLoaded]);
 
@@ -2485,7 +3597,8 @@ export default function MapView() {
       globalFilters,
       { highwayRefTokens: highwayRefs }
     );
-    const lineColor = isQuizActive
+    const isBuildingQuizMode = isBuildingQuizActive && !isQuizActive;
+    const baseLineColor = isQuizActive
       ? buildRoadColorExpression(
           quizColorTokens,
           quizFoundMatchIndex,
@@ -2493,6 +3606,7 @@ export default function MapView() {
           quizColorOverrides ?? undefined
         )
       : buildRoadColorExpression(effectiveActiveRoadTokens, roadMatchIndex);
+    const lineColor = isBuildingQuizMode ? BUILDING_QUIZ_ROAD_COLOR : baseLineColor;
     const labelFilterOverrides = getRoadFilterOverrides(city, labelTokens);
     const labelGlobalFilters = getRoadGlobalFilters(city, includeGatineauRoads);
     const labelFilter = isQuizActive
@@ -2518,6 +3632,9 @@ export default function MapView() {
         labelTokens
       ),
     });
+    const labelTextSize = isBuildingQuizMode
+      ? BUILDING_QUIZ_ROAD_LABEL_SIZE_EXPRESSION
+      : ROAD_LABEL_SIZE_EXPRESSION;
 
     if (map.getLayer(ROAD_LAYER_ID)) {
       map.setFilter(ROAD_LAYER_ID, filter);
@@ -2526,6 +3643,7 @@ export default function MapView() {
     if (map.getLayer(ROAD_LABEL_LAYER_ID)) {
       map.setFilter(ROAD_LABEL_LAYER_ID, labelFilter);
       map.setLayoutProperty(ROAD_LABEL_LAYER_ID, "text-field", labelTextExpression);
+      map.setLayoutProperty(ROAD_LABEL_LAYER_ID, "text-size", labelTextSize);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-color", textColor);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-halo-color", labelHaloColor);
       map.setPaintProperty(ROAD_LABEL_LAYER_ID, "text-opacity", labelOpacity);
@@ -2536,6 +3654,7 @@ export default function MapView() {
     effectiveActiveRoadTokens,
     effectiveQuizRoadTokens,
     includeGatineauRoads,
+    isBuildingQuizActive,
     isQuizActive,
     mapLoaded,
     quizColorTokens,
@@ -2602,14 +3721,168 @@ export default function MapView() {
   }, [quizQueue]);
 
   useEffect(() => {
+    buildingQuizLabelsRef.current = buildingQuizLabels;
+  }, [buildingQuizLabels]);
+
+  useEffect(() => {
+    buildingQuizFoundLabelsRef.current = buildingQuizFoundLabels;
+  }, [buildingQuizFoundLabels]);
+
+  useEffect(() => {
+    buildingQuizQueueRef.current = buildingQuizQueue;
+  }, [buildingQuizQueue]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || city !== "kingston") return;
+    if (!map.getLayer(BUILDING_FILL_LAYER_ID)) return;
+    const baseColor = isBuildingQuizActive
+      ? KINGSTON_BUILDING_QUIZ_BASE_COLOR
+      : isQuizActive
+        ? KINGSTON_BUILDING_ROAD_QUIZ_COLOR
+        : KINGSTON_BUILDING_COLOR_EXPRESSION;
+    const fillColor = isBuildingQuizActive
+      ? buildBuildingQuizColorExpression(
+          BUILDING_LABEL_DISPLAY_EXPRESSION,
+          buildingQuizCorrectLabels,
+          buildingQuizIncorrectLabels,
+          baseColor
+        )
+      : baseColor;
+    map.setPaintProperty(BUILDING_FILL_LAYER_ID, "fill-color", fillColor);
+    const fillOpacity = isBuildingQuizActive
+      ? KINGSTON_BUILDING_QUIZ_OPACITY_EXPRESSION
+      : isQuizActive
+        ? KINGSTON_BUILDING_ROAD_QUIZ_OPACITY_EXPRESSION
+        : KINGSTON_BUILDING_FILL_OPACITY_EXPRESSION;
+    map.setPaintProperty(BUILDING_FILL_LAYER_ID, "fill-opacity", fillOpacity);
+    if (map.getLayer(BUILDING_OUTLINE_LAYER_ID)) {
+      const outlineColor = isBuildingQuizActive
+        ? KINGSTON_BUILDING_QUIZ_OUTLINE_COLOR
+        : isQuizActive
+          ? KINGSTON_BUILDING_ROAD_QUIZ_COLOR
+          : KINGSTON_BUILDING_COLOR_EXPRESSION;
+      map.setPaintProperty(BUILDING_OUTLINE_LAYER_ID, "line-color", outlineColor);
+      map.setPaintProperty(
+        BUILDING_OUTLINE_LAYER_ID,
+        "line-opacity",
+        KINGSTON_BUILDING_OUTLINE_OPACITY
+      );
+    }
+    if (map.getLayer(BUILDING_LABEL_LAYER_ID)) {
+      const labelHaloColor = isBuildingQuizActive
+        ? buildBuildingQuizColorExpression(
+            ["get", "label"],
+            buildingQuizCorrectLabels,
+            buildingQuizIncorrectLabels,
+            KINGSTON_BUILDING_LABEL_HALO_COLOR
+          )
+        : KINGSTON_BUILDING_LABEL_HALO_COLOR;
+      map.setPaintProperty(
+        BUILDING_LABEL_LAYER_ID,
+        "text-halo-color",
+        labelHaloColor
+      );
+    }
+  }, [
+    buildingQuizCorrectLabels,
+    buildingQuizIncorrectLabels,
+    city,
+    isBuildingQuizActive,
+    isQuizActive,
+    mapLoaded,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || city !== "kingston") return;
+    if (!map.getSource(BUILDING_LABEL_SOURCE_ID)) return;
+
+    scheduleBuildingLabelUpdate();
+
+    const handleMoveEnd = () => scheduleBuildingLabelUpdate();
+    const handleSourceData = (event: MapSourceDataEvent) => {
+      if (event.sourceId !== BUILDING_SOURCE_ID) return;
+      if (event.sourceDataType !== "content") return;
+      if (!event.isSourceLoaded) return;
+      scheduleBuildingLabelUpdate();
+    };
+
+    map.on("moveend", handleMoveEnd);
+    map.on("sourcedata", handleSourceData);
+
+    return () => {
+      map.off("moveend", handleMoveEnd);
+      map.off("sourcedata", handleSourceData);
+      if (buildingLabelUpdateFrameRef.current !== null) {
+        cancelAnimationFrame(buildingLabelUpdateFrameRef.current);
+        buildingLabelUpdateFrameRef.current = null;
+      }
+    };
+  }, [city, mapLoaded, scheduleBuildingLabelUpdate]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const buildingLabelVisibility = isQuizActive ? "none" : "visible";
+    const fieldLabelVisibility =
+      isQuizActive || isBuildingQuizActive ? "none" : "visible";
+    if (map.getLayer(BUILDING_LABEL_LAYER_ID)) {
+      map.setLayoutProperty(
+        BUILDING_LABEL_LAYER_ID,
+        "visibility",
+        buildingLabelVisibility
+      );
+    }
+    if (map.getLayer(KINGSTON_FIELD_LABEL_LAYER_ID)) {
+      map.setLayoutProperty(
+        KINGSTON_FIELD_LABEL_LAYER_ID,
+        "visibility",
+        fieldLabelVisibility
+      );
+    }
+  }, [city, isBuildingQuizActive, isQuizActive, mapLoaded]);
+
+  useEffect(() => {
+    if (!mapLoaded || city !== "kingston") return;
+    scheduleBuildingLabelUpdate();
+  }, [
+    buildingQuizFoundLabels,
+    city,
+    isBuildingQuizActive,
+    mapLoaded,
+    scheduleBuildingLabelUpdate,
+  ]);
+
+  useEffect(() => {
     quizAttemptedTokenRef.current = null;
   }, [quizTargetToken]);
+
+  useEffect(() => {
+    buildingQuizAttemptLabelRef.current = null;
+  }, [buildingQuizTargetLabel]);
 
   useEffect(() => {
     return () => {
       clearQuizResultTimeout();
     };
   }, [clearQuizResultTimeout]);
+
+  useEffect(() => {
+    return () => {
+      clearBuildingQuizResultTimeout();
+    };
+  }, [clearBuildingQuizResultTimeout]);
+
+  useEffect(() => {
+    if (!isBuildingQuizActive || hasInitializedBuildingQuizRef.current) return;
+    startBuildingQuiz();
+  }, [isBuildingQuizActive, startBuildingQuiz]);
+
+  useEffect(() => {
+    if (!isBuildingQuizActive || city !== "kingston" || !mapLoaded) return;
+    lockKingstonCampusView();
+  }, [city, isBuildingQuizActive, lockKingstonCampusView, mapLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2642,9 +3915,12 @@ export default function MapView() {
       if (quizAttemptedTokenRef.current === quizTargetToken) return;
       quizAttemptedTokenRef.current = quizTargetToken;
 
-      const isMatch = features.some((feature) =>
-        featureMatchesToken(feature, tokenParts, quizTargetToken)
-      );
+      const matchedTokens = getQuizFeatureTokens(features, quizRoadMatchIndex);
+      const isMatch =
+        matchedTokens.has(quizTargetToken) ||
+        features.some((feature) =>
+          featureMatchesToken(feature, tokenParts, quizTargetToken)
+        );
       const nextGuessCount = quizGuessCount + 1;
       const nextCorrectCount = quizCorrectCount + (isMatch ? 1 : 0);
 
@@ -2703,8 +3979,103 @@ export default function MapView() {
     mapLoaded,
     quizCorrectCount,
     quizGuessCount,
+    quizRoadMatchIndex,
     quizTargetToken,
     showQuizResult,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !isBuildingQuizActive || !buildingQuizTargetLabel) {
+      return;
+    }
+
+    const handleBuildingClick = (event: MapMouseEvent) => {
+      const QUIZ_HITBOX_PX = 10;
+      const { x, y } = event.point;
+      const bbox: [[number, number], [number, number]] = [
+        [x - QUIZ_HITBOX_PX, y - QUIZ_HITBOX_PX],
+        [x + QUIZ_HITBOX_PX, y + QUIZ_HITBOX_PX],
+      ];
+
+      const features = map.queryRenderedFeatures(bbox, {
+        layers: [BUILDING_FILL_LAYER_ID],
+      });
+      if (!features.length) return;
+      if (buildingQuizFoundLabelsRef.current.includes(buildingQuizTargetLabel)) {
+        return;
+      }
+      if (buildingQuizAttemptLabelRef.current === buildingQuizTargetLabel) {
+        return;
+      }
+      buildingQuizAttemptLabelRef.current = buildingQuizTargetLabel;
+
+      const isMatch = features.some((feature) =>
+        buildingFeatureMatchesLabel(feature, buildingQuizTargetLabel)
+      );
+      const nextGuessCount = buildingQuizGuessCount + 1;
+      const nextCorrectCount = buildingQuizCorrectCount + (isMatch ? 1 : 0);
+
+      showBuildingQuizResult(isMatch);
+      setBuildingQuizGuessCount((count) => count + 1);
+      if (isMatch) {
+        setBuildingQuizCorrectCount((count) => count + 1);
+        setBuildingQuizCorrectLabels((labels) =>
+          labels.includes(buildingQuizTargetLabel)
+            ? labels
+            : [...labels, buildingQuizTargetLabel]
+        );
+      }
+      if (!isMatch) {
+        setBuildingQuizIncorrectLabels((labels) =>
+          labels.includes(buildingQuizTargetLabel)
+            ? labels
+            : [...labels, buildingQuizTargetLabel]
+        );
+      }
+
+      const nextFound = [
+        ...buildingQuizFoundLabelsRef.current,
+        buildingQuizTargetLabel,
+      ];
+      buildingQuizFoundLabelsRef.current = nextFound;
+      setBuildingQuizFoundLabels(nextFound);
+
+      let nextTarget: string | null = null;
+      let nextQueue = buildingQuizQueueRef.current;
+      if (nextQueue.length) {
+        [nextTarget, ...nextQueue] = nextQueue;
+      } else {
+        const refreshedQueue = buildQuizQueue(
+          nextFound,
+          buildingQuizLabelsRef.current
+        );
+        if (refreshedQueue.length) {
+          [nextTarget, ...nextQueue] = refreshedQueue;
+        }
+      }
+      buildingQuizQueueRef.current = nextQueue;
+      setBuildingQuizQueue(nextQueue);
+      setBuildingQuizTargetLabel(nextTarget);
+      setBuildingQuizMessage(
+        nextTarget
+          ? null
+          : getBuildingQuizEmptyMessage(nextCorrectCount, nextGuessCount)
+      );
+    };
+
+    map.on("click", handleBuildingClick);
+    return () => {
+      map.off("click", handleBuildingClick);
+    };
+  }, [
+    buildQuizQueue,
+    buildingQuizCorrectCount,
+    buildingQuizGuessCount,
+    buildingQuizTargetLabel,
+    isBuildingQuizActive,
+    mapLoaded,
+    showBuildingQuizResult,
   ]);
 
   // Handle City Change
@@ -2713,30 +4084,80 @@ export default function MapView() {
     if (!map) return;
     const { center, zoom, mapBounds } = CITY_CONFIG[city];
     map.setMaxBounds(mapBounds);
+    map.setMinZoom(ROAD_TILE_MIN_ZOOM);
     map.flyTo({ center, zoom });
   }, [city]);
 
   const activeCity = CITY_CONFIG[city];
-  const quizScoreText = `${quizCorrectCount}/${quizGuessCount}`;
-  const isFinalScore =
+  const roadQuizButtonLabel = city === "kingston" ? "Roads Quiz" : "Start Quiz";
+  const roadQuizScoreText = `${quizCorrectCount}/${quizGuessCount}`;
+  const isRoadFinalScore =
     !quizTargetToken &&
     quizGuessCount > 0 &&
     quizMessage?.startsWith("Final score") === true;
-  const quizPanelLabel = isFinalScore ? "Final score" : "Find";
-  const quizPanelState =
-    quizTargetToken || isFinalScore ? "ready" : "empty";
-  const quizPanelValue =
+  const roadQuizPanelLabel = isRoadFinalScore ? "Final score" : "Find";
+  const roadQuizPanelState =
+    quizTargetToken || isRoadFinalScore ? "ready" : "empty";
+  const roadQuizPanelValue =
     quizPromptLabel ??
-    (isFinalScore
-      ? quizScoreText
+    (isRoadFinalScore
+      ? roadQuizScoreText
       : quizMessage ?? "Pan or zoom to load a prompt.");
-  const showRoadsLoading = roadsLoading || isCatalogLoading;
-  const quizScoreLabel =
+  const roadQuizScoreLabel =
     quizResultState === "correct"
       ? "Correct!"
       : quizResultState === "incorrect"
         ? "Incorrect."
         : "Score";
+  const buildingQuizScoreText = `${buildingQuizCorrectCount}/${buildingQuizGuessCount}`;
+  const isBuildingFinalScore =
+    !buildingQuizTargetLabel &&
+    buildingQuizGuessCount > 0 &&
+    buildingQuizMessage?.startsWith("Final score") === true;
+  const buildingQuizPanelLabel = isBuildingFinalScore ? "Final score" : "Find";
+  const buildingQuizPanelState =
+    buildingQuizTargetLabel || isBuildingFinalScore ? "ready" : "empty";
+  const buildingQuizPanelValue =
+    buildingQuizTargetLabel ??
+    (isBuildingFinalScore
+      ? buildingQuizScoreText
+      : buildingQuizMessage ?? "Pan or zoom to load a prompt.");
+  const buildingQuizScoreLabel =
+    buildingQuizResultState === "correct"
+      ? "Correct!"
+      : buildingQuizResultState === "incorrect"
+        ? "Incorrect."
+        : "Score";
+  const showRoadsLoading = roadsLoading || isCatalogLoading;
+  const activeQuiz = isQuizActive
+    ? {
+        isFinalScore: isRoadFinalScore,
+        panelLabel: roadQuizPanelLabel,
+        panelState: roadQuizPanelState,
+        panelValue: roadQuizPanelValue,
+        scoreLabel: roadQuizScoreLabel,
+        scoreText: roadQuizScoreText,
+        resultState: quizResultState,
+        hasTarget: Boolean(quizTargetToken),
+        onSkip: handleSkipRoad,
+        onEnd: handleQuizToggle,
+        skipLabel: "Skip Road",
+      }
+    : isBuildingQuizActive
+      ? {
+          isFinalScore: isBuildingFinalScore,
+          panelLabel: buildingQuizPanelLabel,
+          panelState: buildingQuizPanelState,
+          panelValue: buildingQuizPanelValue,
+          scoreLabel: buildingQuizScoreLabel,
+          scoreText: buildingQuizScoreText,
+          resultState: buildingQuizResultState,
+          hasTarget: Boolean(buildingQuizTargetLabel),
+          onSkip: handleSkipBuilding,
+          onEnd: handleBuildingQuizToggle,
+          skipLabel: "Skip Building",
+        }
+      : null;
 
   return (
     <div className="app-shell">
@@ -2750,42 +4171,51 @@ export default function MapView() {
         className="control-panel"
         data-collapsed={isPanelCollapsed ? "true" : "false"}
       >
-        {isQuizActive ? (
+        {activeQuiz ? (
           <div className="quiz-only">
             <div
               className="quiz-panel"
-              data-state={quizPanelState}
+              data-state={activeQuiz.panelState}
             >
-              <span className="quiz-label">{quizPanelLabel}</span>
+              <span className="quiz-label">{activeQuiz.panelLabel}</span>
               <span className="quiz-value">
-                {quizPanelValue}
+                {activeQuiz.panelValue}
               </span>
-              {!isFinalScore && (
-                <div className="quiz-score-inline" data-state={quizResultState}>
-                  <span className="quiz-score-label">{quizScoreLabel}</span>
-                  <span className="quiz-score-value">{quizScoreText}</span>
+              {!activeQuiz.isFinalScore && (
+                <div
+                  className="quiz-score-inline"
+                  data-state={activeQuiz.resultState}
+                >
+                  <span className="quiz-score-label">
+                    {activeQuiz.scoreLabel}
+                  </span>
+                  <span className="quiz-score-value">
+                    {activeQuiz.scoreText}
+                  </span>
                 </div>
               )}
             </div>
-            {!isFinalScore && (
-              <div className="quiz-score" data-state={quizResultState}>
-                <span className="quiz-score-label">{quizScoreLabel}</span>
-                <span className="quiz-score-value">{quizScoreText}</span>
+            {!activeQuiz.isFinalScore && (
+              <div className="quiz-score" data-state={activeQuiz.resultState}>
+                <span className="quiz-score-label">
+                  {activeQuiz.scoreLabel}
+                </span>
+                <span className="quiz-score-value">{activeQuiz.scoreText}</span>
               </div>
             )}
             <div className="quiz-controls">
               <button
                 type="button"
                 className="quiz-skip"
-                onClick={handleSkipRoad}
-                disabled={!quizTargetToken}
+                onClick={activeQuiz.onSkip}
+                disabled={!activeQuiz.hasTarget}
               >
-                Skip Road
+                {activeQuiz.skipLabel}
               </button>
               <button
                 type="button"
                 className="quiz-end"
-                onClick={handleQuizToggle}
+                onClick={activeQuiz.onEnd}
               >
                 End Quiz
               </button>
@@ -2907,14 +4337,26 @@ export default function MapView() {
                   </p>
                 </div>
               )}
-              <button
-                type="button"
-                className="quiz-toggle"
-                data-active={isQuizActive ? "true" : "false"}
-                onClick={handleQuizToggle}
-              >
-                Start Quiz
-              </button>
+              <div className="quiz-toggle-stack">
+                <button
+                  type="button"
+                  className="quiz-toggle"
+                  data-active={isQuizActive ? "true" : "false"}
+                  onClick={handleQuizToggle}
+                >
+                  {roadQuizButtonLabel}
+                </button>
+                {city === "kingston" && (
+                  <button
+                    type="button"
+                    className="quiz-toggle buildings-quiz-toggle"
+                    data-active={isBuildingQuizActive ? "true" : "false"}
+                    onClick={handleBuildingQuizToggle}
+                  >
+                    Buildings Quiz
+                  </button>
+                )}
+              </div>
             </div>
           </>
         )}
