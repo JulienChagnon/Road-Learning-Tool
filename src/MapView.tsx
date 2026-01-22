@@ -28,7 +28,7 @@ type CityConfig = {
   tilePath: string;
   buildingTilePath?: string;
   catalogPath: string;
-  tagline: string;
+  tagline?: string;
   defaultTokens: string[];
 };
 type QuizResultState = "idle" | "correct" | "incorrect";
@@ -396,7 +396,6 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     mapBounds: buildMapBounds(OTTAWA_TILE_BOUNDS),
     tilePath: "assets/tiles/ottawa/{z}/{x}/{y}.pbf",
     catalogPath: "assets/roads/ottawa.json",
-    tagline: "Memorize high traffic roads in Canada's Capital.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.ottawa,
   },
   montreal: {
@@ -407,7 +406,6 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     mapBounds: buildMapBounds(MONTREAL_TILE_BOUNDS),
     tilePath: "assets/tiles/montreal/{z}/{x}/{y}.pbf",
     catalogPath: "assets/roads/montreal.json",
-    tagline: "Memorize high traffic roads in Montreal.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.montreal,
   },
   kingston: {
@@ -423,7 +421,6 @@ const CITY_CONFIG: Record<CityKey, CityConfig> = {
     tilePath: "assets/tiles/kingston/{z}/{x}/{y}.pbf",
     buildingTilePath: "assets/tiles/kingston/buildings/{z}/{x}/{y}.pbf",
     catalogPath: "assets/roads/kingston.json",
-    tagline: "Memorize key streets and buildings around Queen's University.",
     defaultTokens: DEFAULT_ROAD_TOKENS_BY_CITY.kingston,
   },
 };
@@ -4252,9 +4249,9 @@ export default function MapView() {
             <div className="panel-header">
               <p className="eyebrow">Road Learning Tool</p>
               <h1>{activeCity.label}</h1>
-              <p className="subhead">
-                {activeCity.tagline}
-              </p>
+              {activeCity.tagline && (
+                <p className="subhead">{activeCity.tagline}</p>
+              )}
               <button
                 type="button"
                 className="panel-hide-toggle"
